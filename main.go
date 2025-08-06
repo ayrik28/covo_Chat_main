@@ -27,6 +27,7 @@ type CovoBot struct {
 	crsCommand      *commands.CrsCommand
 	clownCommand    *commands.ClownCommand
 	crushCommand    *commands.CrushCommand
+	gapCommand      *commands.GapCommand
 	// summaryScheduler *scheduler.DailySummaryScheduler
 	cron *cron.Cron
 }
@@ -64,6 +65,7 @@ func NewCovoBot() (*CovoBot, error) {
 	crsCommand := commands.NewCrsCommand(rateLimiter)
 	clownCommand := commands.NewClownCommand(aiClient, rateLimiter, bot)
 	crushCommand := commands.NewCrushCommand(storage, bot)
+	gapCommand := commands.NewGapCommand(bot)
 
 	// راه‌اندازی زمان‌بند
 	// summaryScheduler := scheduler.NewDailySummaryScheduler(bot, storage, aiClient)
@@ -82,6 +84,7 @@ func NewCovoBot() (*CovoBot, error) {
 		crsCommand:      crsCommand,
 		clownCommand:    clownCommand,
 		crushCommand:    crushCommand,
+		gapCommand:      gapCommand,
 		// summaryScheduler: summaryScheduler,
 		cron: cronJob,
 	}, nil
@@ -145,8 +148,9 @@ func (r *CovoBot) handleUpdate(update tgbotapi.Update) {
 • /cj <موضوع> - جوک خنده‌دار درباره هر موضوعی تولید کن
 • /music - پیشنهاد موسیقی بر اساس سلیقه شما
 • /clown <نام> - توهین هوشمند به شخص مورد نظر
-• /کراشفعال - فعال‌سازی قابلیت کراش
+• /crushon - فعال‌سازی قابلیت کراش
 • /crs - بررسی وضعیت بات
+• /gap - نمایش دستورات مخصوص گروه
 • /covog - نمایش راهنما
 • /help - نمایش راهنما
 
@@ -232,7 +236,7 @@ func (r *CovoBot) handleUpdate(update tgbotapi.Update) {
 		response = r.crsCommand.Handle(update)
 	case strings.HasPrefix(text, "/clown"):
 		response = r.clownCommand.Handle(update)
-	case strings.HasPrefix(text, "/کراشفعال"), strings.HasPrefix(text, "/کراشغیرفعال"), strings.HasPrefix(text, "/کراشوضعیت"), strings.HasPrefix(text, "/کراشدستی"):
+	case strings.HasPrefix(text, "/crushon"), strings.HasPrefix(text, "/crushoff"), strings.HasPrefix(text, "/کراشوضعیت"):
 		response = r.crushCommand.Handle(update)
 	case strings.HasPrefix(text, "/start"):
 		response = r.handleStartCommand(update)
@@ -240,6 +244,8 @@ func (r *CovoBot) handleUpdate(update tgbotapi.Update) {
 		response = r.handleStartCommand(update)
 	case strings.HasPrefix(text, "/help"):
 		response = r.handleHelpCommand(update)
+	case strings.HasPrefix(text, "/gap"):
+		response = r.gapCommand.Handle(update)
 	default:
 		return // نادیده گرفتن دستورات ناشناخته
 	}
@@ -291,8 +297,9 @@ func (r *CovoBot) handleStartCommand(update tgbotapi.Update) tgbotapi.MessageCon
 • /cj <موضوع> - جوک خنده‌دار درباره هر موضوعی تولید کن
 • /music - پیشنهاد موسیقی بر اساس سلیقه شما
 • /clown <نام> - توهین هوشمند به شخص مورد نظر
-• /کراشفعال - فعال‌سازی قابلیت کراش
+• /crushon - فعال‌سازی قابلیت کراش
 • /crs - بررسی وضعیت بات
+• /gap - نمایش دستورات مخصوص گروه
 • /covog - نمایش راهنما
 • /help - نمایش راهنما
 
@@ -322,8 +329,9 @@ func (r *CovoBot) handleHelpCommand(update tgbotapi.Update) tgbotapi.MessageConf
 • /cj <موضوع> - جوک خنده‌دار و تمیز درباره هر موضوعی تولید کن
 • /music - پیشنهاد موسیقی بر اساس سلیقه شما (با ریپلای)
 • /clown <نام> - توهین هوشمند به شخص مورد نظر
-• /کراشفعال - فعال‌سازی قابلیت کراش
+• /crushon - فعال‌سازی قابلیت کراش
 • /crs - بررسی وضعیت بات
+• /gap - نمایش دستورات مخصوص گروه
 • /covog - نمایش راهنما (در گروه‌ها)
 
 📊 *استفاده:*
@@ -342,9 +350,9 @@ func (r *CovoBot) handleHelpCommand(update tgbotapi.Update) tgbotapi.MessageConf
 • بات با هوش مصنوعی به آن شخص توهین می‌کند
 
 💘 *قابلیت کراش:*
-• با /کراشفعال قابلیت را فعال کنید
+• با /crushon قابلیت را فعال کنید
 • هر 15 ساعت یک جفت کراش جدید اعلام می‌شود
-• از /کراشدستی برای اعلام دستی استفاده کنید
+
 • با /کراشوضعیت وضعیت را بررسی کنید
 
 💡 *نکات:*

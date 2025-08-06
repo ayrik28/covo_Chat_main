@@ -27,22 +27,24 @@ func (r *CrushCommand) Handle(update tgbotapi.Update) tgbotapi.MessageConfig {
 	text := update.Message.Text
 
 	// بررسی دستور فعال‌سازی
-	if text == "/کراشفعال" {
+	if text == "/crushon" {
 		if err := r.storage.SetCrushEnabled(chatID, true); err != nil {
 			log.Printf("Error enabling crush: %v", err)
 			return tgbotapi.NewMessage(chatID, "❌ خطا در فعال‌سازی قابلیت کراش")
 		}
-		msg := tgbotapi.NewMessage(chatID, "💘 قابلیت کراش فعال شد! ✅\n\nهر 15 ساعت یک جفت کراش جدید اعلام می‌شود! 😂")
+		msg := tgbotapi.NewMessage(chatID, "💘 *قابلیت کراش با موفقیت فعال شد!* ✅\n\n🔥 از این لحظه هر 15 ساعت یک بار، دو نفر از اعضای گروه به صورت تصادفی به عنوان کراش انتخاب می‌شوند!\n\n👀 منتظر اعلام اولین جفت کراش باشید...")
+		msg.ParseMode = tgbotapi.ModeMarkdown
 		return msg
 	}
 
 	// بررسی دستور غیرفعال‌سازی
-	if text == "/کراشغیرفعال" {
+	if text == "/crushoff" {
 		if err := r.storage.SetCrushEnabled(chatID, false); err != nil {
 			log.Printf("Error disabling crush: %v", err)
 			return tgbotapi.NewMessage(chatID, "❌ خطا در غیرفعال‌سازی قابلیت کراش")
 		}
-		msg := tgbotapi.NewMessage(chatID, "💘 قابلیت کراش غیرفعال شد! ❌\n\nدیگر اعلام کراش نخواهد شد.")
+		msg := tgbotapi.NewMessage(chatID, "💔 *قابلیت کراش غیرفعال شد!* ❌\n\n🚫 دیگر اعلام خودکار کراش در این گروه انجام نخواهد شد.\n\n✅ برای فعال‌سازی مجدد از دستور `/crushon` استفاده کنید.")
+		msg.ParseMode = tgbotapi.ModeMarkdown
 		return msg
 	}
 
@@ -61,27 +63,22 @@ func (r *CrushCommand) Handle(update tgbotapi.Update) tgbotapi.MessageConfig {
 			status = "غیرفعال ❌"
 		}
 
-		msg := tgbotapi.NewMessage(chatID, fmt.Sprintf("💘 *وضعیت قابلیت کراش:*\n\nوضعیت فعلی: %s\n\nدستورات:\n`/کراشفعال` - فعال‌سازی\n`/کراشغیرفعال` - غیرفعال‌سازی\n`/کراشدستی` - اعلام کراش دستی", status))
+		msg := tgbotapi.NewMessage(chatID, fmt.Sprintf("💘 *وضعیت قابلیت کراش:*\n\nوضعیت فعلی: %s\n\nدستورات:\n`/crushon` - فعال‌سازی\n`/crushoff` - غیرفعال‌سازی", status))
 		msg.ParseMode = tgbotapi.ModeMarkdown
 		return msg
 	}
 
-	// بررسی دستور کراش دستی
-	if text == "/کراشدستی" {
-		go r.announceRandomCrush(chatID)
-		msg := tgbotapi.NewMessage(chatID, "💘 در حال انتخاب جفت کراش... 😂")
-		return msg
-	}
+	// دستور کراش دستی حذف شد
 
 	// اگر دستور نامعتبر بود
-	msg := tgbotapi.NewMessage(chatID, "💘 *دستورات کراش:*\n\n`/کراشفعال` - فعال‌سازی قابلیت\n`/کراشغیرفعال` - غیرفعال‌سازی\n`/کراشوضعیت` - نمایش وضعیت\n`/کراشدستی` - اعلام کراش دستی")
+	msg := tgbotapi.NewMessage(chatID, "💘 *دستورات کراش:*\n\n`/crushon` - فعال‌سازی قابلیت\n`/crushoff` - غیرفعال‌سازی\n`/کراشوضعیت` - نمایش وضعیت")
 	msg.ParseMode = tgbotapi.ModeMarkdown
 	return msg
 }
 
 // تابع اعلام کراش تصادفی
 func (r *CrushCommand) announceRandomCrush(chatID int64) {
-	// دریافت لیست کاربران گروه
+	// دریافت لیست کاربران گروه مستقیماً از دیتابیس
 	users, err := r.storage.GetGroupMembers(chatID)
 	if err != nil {
 		log.Printf("Error getting group members: %v", err)
@@ -96,30 +93,37 @@ func (r *CrushCommand) announceRandomCrush(chatID int64) {
 		return
 	}
 
-	// انتخاب دو کاربر تصادفی
+	// انتخاب دو کاربر تصادفی با استفاده از rand.Shuffle برای انتخاب تصادفی بهتر
 	rand.Seed(time.Now().UnixNano())
-	i := rand.Intn(len(users))
-	j := rand.Intn(len(users))
-	for i == j {
-		j = rand.Intn(len(users))
-	}
 
-	user1 := users[i]
-	user2 := users[j]
+	// برای اطمینان از انتخاب تصادفی واقعی، لیست را شافل می‌کنیم
+	rand.Shuffle(len(users), func(i, j int) {
+		users[i], users[j] = users[j], users[i]
+	})
+
+	// انتخاب دو کاربر اول از لیست شافل شده
+	user1 := users[0]
+	user2 := users[1]
 
 	// ساخت پیام کراش
 	crushMessages := []string{
-		fmt.Sprintf("💘 امروز %s کراش %s هست! 😂", user1.Name, user2.Name),
-		fmt.Sprintf("💕 %s عاشق %s شده! 🥰", user1.Name, user2.Name),
-		fmt.Sprintf("🔥 %s و %s عاشق همدیگه شدن! 💕", user1.Name, user2.Name),
-		fmt.Sprintf("💘 %s دلش برای %s می‌تپه! 💓", user1.Name, user2.Name),
-		fmt.Sprintf("🥰 %s عاشقانه به %s نگاه می‌کنه! 😍", user1.Name, user2.Name),
+		fmt.Sprintf("💘 *کراش امروز:* %s روی %s کراش زده! 😍", user1.Name, user2.Name),
+		fmt.Sprintf("💕 *خبر داغ:* %s عاشق %s شده! 🥰", user1.Name, user2.Name),
+		fmt.Sprintf("🔥 *اعلام رسمی:* %s و %s عاشق همدیگه شدن! 💕", user1.Name, user2.Name),
+		fmt.Sprintf("💘 *قلب‌ها به تپش افتادند:* %s دلش برای %s می‌تپه! 💓", user1.Name, user2.Name),
+		fmt.Sprintf("🥰 *نگاه‌های عاشقانه:* %s مخفیانه به %s نگاه می‌کنه! 😍", user1.Name, user2.Name),
+		fmt.Sprintf("💐 *عشق در هوا موج می‌زند:* %s می‌خواهد به %s نزدیک شود! 💝", user1.Name, user2.Name),
+		fmt.Sprintf("💌 *پیام عاشقانه:* %s برای %s نامه‌ای پر از عشق نوشته! 📝", user1.Name, user2.Name),
+		fmt.Sprintf("🌹 *گل سرخ عشق:* %s برای %s گل فرستاده! 🌷", user1.Name, user2.Name),
+		fmt.Sprintf("🍫 *شیرینی عشق:* %s برای %s شکلات خریده! 🍬", user1.Name, user2.Name),
+		fmt.Sprintf("🎵 *آهنگ عاشقانه:* %s برای %s آهنگ می‌خواند! 🎤", user1.Name, user2.Name),
 	}
 
 	selectedMessage := crushMessages[rand.Intn(len(crushMessages))]
 
 	// ارسال پیام
 	msg := tgbotapi.NewMessage(chatID, selectedMessage)
+	msg.ParseMode = tgbotapi.ModeMarkdown
 	_, err = r.bot.Send(msg)
 	if err != nil {
 		log.Printf("خطا در ارسال پیام کراش: %v", err)
@@ -130,7 +134,7 @@ func (r *CrushCommand) announceRandomCrush(chatID int64) {
 func (r *CrushCommand) StartCrushScheduler() {
 	go func() {
 		for {
-			time.Sleep(15 * time.Hour) // هر 15 ساعت
+			time.Sleep(15 * time.Hour) // هر 15 ساعت یکبار
 
 			// دریافت تمام گروه‌هایی که قابلیت کراش فعال دارند
 			enabledGroups, err := r.storage.GetCrushEnabledGroups()
@@ -139,10 +143,14 @@ func (r *CrushCommand) StartCrushScheduler() {
 				continue
 			}
 
+			log.Printf("Sending crush announcements to %d enabled groups", len(enabledGroups))
+
 			for _, groupID := range enabledGroups {
 				go r.announceRandomCrush(groupID)
-				time.Sleep(5 * time.Second) // فاصله بین اعلام‌ها
+				time.Sleep(5 * time.Minute) // فاصله کوتاه بین اعلام‌ها
 			}
 		}
 	}()
+
+	log.Println("💘 Crush scheduler started - announcing crushes every 15 hours")
 }
