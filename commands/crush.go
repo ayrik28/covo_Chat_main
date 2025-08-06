@@ -32,7 +32,7 @@ func (r *CrushCommand) Handle(update tgbotapi.Update) tgbotapi.MessageConfig {
 			log.Printf("Error enabling crush: %v", err)
 			return tgbotapi.NewMessage(chatID, "❌ خطا در فعال‌سازی قابلیت کراش")
 		}
-		msg := tgbotapi.NewMessage(chatID, "💘 *قابلیت کراش با موفقیت فعال شد!* ✅\n\n🔥 از این لحظه هر 15 ساعت یک بار، دو نفر از اعضای گروه به صورت تصادفی به عنوان کراش انتخاب می‌شوند!\n\n👀 منتظر اعلام اولین جفت کراش باشید...")
+		msg := tgbotapi.NewMessage(chatID, "💘 *قابلیت کراش با موفقیت فعال شد!* ✅\n\n🔥 از این لحظه هر 10 ساعت یک بار، دو نفر از اعضای گروه به صورت تصادفی به عنوان کراش انتخاب می‌شوند!\n\n👀 منتظر اعلام اولین جفت کراش باشید...")
 		msg.ParseMode = tgbotapi.ModeMarkdown
 		return msg
 	}
@@ -134,7 +134,7 @@ func (r *CrushCommand) announceRandomCrush(chatID int64) {
 func (r *CrushCommand) StartCrushScheduler() {
 	go func() {
 		for {
-			time.Sleep(15 * time.Hour) // هر 15 ساعت یکبار
+			time.Sleep(10 * time.Hour) // هر 10 ساعت یکبار
 
 			// دریافت تمام گروه‌هایی که قابلیت کراش فعال دارند
 			enabledGroups, err := r.storage.GetCrushEnabledGroups()
@@ -152,5 +152,5 @@ func (r *CrushCommand) StartCrushScheduler() {
 		}
 	}()
 
-	log.Println("💘 Crush scheduler started - announcing crushes every 15 hours")
+	log.Println("💘 Crush scheduler started - announcing crushes every 10 hours")
 }
