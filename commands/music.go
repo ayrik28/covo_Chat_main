@@ -100,4 +100,4 @@ func (r *MusicCommand) handleReply(update tgbotapi.Update) tgbotapi.MessageConfi
 	msg := tgbotapi.NewMessage(chatID, formattedResponse)
 	msg.ParseMode = tgbotapi.ModeMarkdown
 	return msg
-} 
+}

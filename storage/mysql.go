@@ -27,8 +27,8 @@ type GroupMessage struct {
 }
 
 type GroupMember struct {
-	GroupID int64 `gorm:"primaryKey"`
-	UserID  int64 `gorm:"primaryKey"`
+	GroupID int64 `gorm:"primaryKey;uniqueIndex:idx_group_user"`
+	UserID  int64 `gorm:"primaryKey;uniqueIndex:idx_group_user"`
 	Name    string
 }
 
@@ -51,12 +51,55 @@ func NewMySQLStorage(host, port, user, password, dbname string) (*MySQLStorage, 
 		return nil, fmt.Errorf("error connecting to MySQL: %v", err)
 	}
 
+	// پاکسازی داده‌های تکراری قبل از اضافه کردن ایندکس یونیک
+	if err := cleanupDuplicateMembers(db); err != nil {
+		return nil, fmt.Errorf("error cleaning up duplicate members: %v", err)
+	}
+
 	// Auto Migrate the schemas
 	if err := db.AutoMigrate(&UserUsage{}, &GroupMessage{}, &GroupMember{}, &FeatureSetting{}); err != nil {
 		return nil, fmt.Errorf("error migrating database: %v", err)
 	}
 
 	return &MySQLStorage{db: db}, nil
+}
+
+// پاکسازی داده‌های تکراری از جدول group_members
+func cleanupDuplicateMembers(db *gorm.DB) error {
+	// ایجاد جدول موقت برای نگهداری آخرین رکورد هر ترکیب group_id و user_id
+	if err := db.Exec(`
+		CREATE TEMPORARY TABLE temp_members AS
+		SELECT group_id, user_id, MAX(name) as name
+		FROM group_members
+		GROUP BY group_id, user_id
+	`).Error; err != nil {
+		return fmt.Errorf("error creating temporary table: %v", err)
+	}
+
+	// پاک کردن تمام داده‌های جدول اصلی
+	if err := db.Exec("DELETE FROM group_members").Error; err != nil {
+		return fmt.Errorf("error deleting from group_members: %v", err)
+	}
+
+	// انتقال داده‌های پاکسازی شده به جدول اصلی
+	if err := db.Exec(`
+		INSERT INTO group_members (group_id, user_id, name)
+		SELECT group_id, user_id, name FROM temp_members
+	`).Error; err != nil {
+		return fmt.Errorf("error inserting cleaned data: %v", err)
+	}
+
+	// حذف جدول موقت
+	if err := db.Exec("DROP TEMPORARY TABLE IF EXISTS temp_members").Error; err != nil {
+		return fmt.Errorf("error dropping temporary table: %v", err)
+	}
+
+	// اضافه کردن ایندکس یونیک
+	if err := db.Exec("ALTER TABLE group_members ADD UNIQUE INDEX idx_group_user (group_id, user_id)").Error; err != nil {
+		return fmt.Errorf("error adding unique index: %v", err)
+	}
+
+	return nil
 }
 
 // User Usage Methods
@@ -192,12 +235,14 @@ func (m *MySQLStorage) GetCrushEnabledGroups() ([]int64, error) {
 
 // Group Members Methods
 func (m *MySQLStorage) AddGroupMember(groupID int64, userID int64, name string) error {
-	member := GroupMember{
-		GroupID: groupID,
-		UserID:  userID,
-		Name:    name,
-	}
-	return m.db.Save(&member).Error
+	// استفاده از Upsert برای اضافه کردن یا آپدیت کردن عضو گروه
+	return m.db.Exec(`
+		INSERT INTO group_members (group_id, user_id, name)
+		VALUES (?, ?, ?)
+		ON DUPLICATE KEY UPDATE
+		name = ?`,
+		groupID, userID, name, name,
+	).Error
 }
 
 func (m *MySQLStorage) GetGroupMembers(groupID int64) ([]GroupMember, error) {

@@ -65,7 +65,7 @@ func NewCovoBot() (*CovoBot, error) {
 	crsCommand := commands.NewCrsCommand(rateLimiter)
 	clownCommand := commands.NewClownCommand(aiClient, rateLimiter, bot)
 	crushCommand := commands.NewCrushCommand(storage, bot)
-	gapCommand := commands.NewGapCommand(bot)
+	gapCommand := commands.NewGapCommand(bot, storage)
 
 	// راه‌اندازی زمان‌بند
 	// summaryScheduler := scheduler.NewDailySummaryScheduler(bot, storage, aiClient)
@@ -124,6 +124,15 @@ func (r *CovoBot) Start() error {
 }
 
 func (r *CovoBot) handleUpdate(update tgbotapi.Update) {
+	// Handle callback queries from inline keyboard
+	if update.CallbackQuery != nil {
+		callback := r.gapCommand.HandleCallback(update)
+		if _, err := r.bot.Request(callback); err != nil {
+			log.Printf("Error handling callback: %v", err)
+		}
+		return
+	}
+
 	if update.Message == nil {
 		return
 	}
