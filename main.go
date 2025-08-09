@@ -1,8 +1,11 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"redhat-bot/ai"
 	"redhat-bot/commands"
 	"redhat-bot/config"
@@ -11,6 +14,7 @@ import (
 	// "redhat-bot/scheduler"
 	"redhat-bot/storage"
 	"strings"
+	"sync"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/robfig/cron/v3"
@@ -33,6 +37,61 @@ type CovoBot struct {
 	moderationCommand *commands.ModerationCommand
 	// summaryScheduler *scheduler.DailySummaryScheduler
 	cron *cron.Cron
+}
+
+// bad words cache
+var loadBadWordsOnce sync.Once
+var cachedBadWords []string
+var cachedFinglishWords []string
+
+type badWordsFile struct {
+	FarsiWords    []string `json:"farsiWords"`
+	FinglishWords []string `json:"finglishWords"`
+}
+
+func loadBadWords() {
+	loadBadWordsOnce.Do(func() {
+		filePath := filepath.Join("jsonfile", "badwords.json")
+		f, err := os.Open(filePath)
+		if err != nil {
+			log.Printf("cannot open badwords file: %v", err)
+			return
+		}
+		defer f.Close()
+
+		var bw badWordsFile
+		if err := json.NewDecoder(f).Decode(&bw); err != nil {
+			log.Printf("cannot decode badwords file: %v", err)
+			return
+		}
+		cachedBadWords = bw.FarsiWords
+		cachedFinglishWords = bw.FinglishWords
+	})
+}
+
+func containsBadWord(text string) bool {
+	if text == "" {
+		return false
+	}
+	loadBadWords()
+	t := strings.ToLower(text)
+	for _, w := range cachedBadWords {
+		if w == "" {
+			continue
+		}
+		if strings.Contains(t, strings.ToLower(w)) {
+			return true
+		}
+	}
+	for _, w := range cachedFinglishWords {
+		if w == "" {
+			continue
+		}
+		if strings.Contains(t, strings.ToLower(w)) {
+			return true
+		}
+	}
+	return false
 }
 
 func NewCovoBot() (*CovoBot, error) {
@@ -66,7 +125,7 @@ func NewCovoBot() (*CovoBot, error) {
 	covoJokeCommand := commands.NewCovoJokeCommand(aiClient, rateLimiter, bot)
 	musicCommand := commands.NewMusicCommand(aiClient, rateLimiter, bot)
 	crsCommand := commands.NewCrsCommand(rateLimiter)
-	clownCommand := commands.NewClownCommand(aiClient, rateLimiter, bot)
+	clownCommand := commands.NewClownCommand(storage, rateLimiter, bot)
 	crushCommand := commands.NewCrushCommand(storage, bot)
 	hafezCommand := commands.NewHafezCommand(bot)
 	adminCommand := commands.NewAdminCommand(bot, storage)
@@ -166,6 +225,15 @@ func (r *CovoBot) handleUpdate(update tgbotapi.Update) {
 				if err := r.storage.SetFeatureEnabled(message.Chat.ID, "crush", false); err != nil {
 					log.Printf("Error initializing crush feature: %v", err)
 				}
+				if err := r.storage.SetFeatureEnabled(message.Chat.ID, "clown", false); err != nil {
+					log.Printf("Error initializing clown feature: %v", err)
+				}
+				if err := r.storage.SetFeatureEnabled(message.Chat.ID, "hafez", false); err != nil {
+					log.Printf("Error initializing hafez feature: %v", err)
+				}
+				if err := r.storage.SetFeatureEnabled(message.Chat.ID, "badword", false); err != nil {
+					log.Printf("Error initializing badword feature: %v", err)
+				}
 				welcomeMsg := tgbotapi.NewMessage(message.Chat.ID, `🤖 *سلام! من بات covo هستم!*
 
 من دستیار هوشمند شما با قابلیت‌های جالب هستم:
@@ -174,11 +242,11 @@ func (r *CovoBot) handleUpdate(update tgbotapi.Update) {
 • /covo <سوال> - هر سوالی دارید بپرسید!
 • /cj <موضوع> - جوک خنده‌دار درباره هر موضوعی تولید کن
 • /music - پیشنهاد موسیقی بر اساس سلیقه شما
-• /clown <نام> - توهین هوشمند به شخص مورد نظر
+• دلقک <نام> - توهین به شخص مورد نظر
 • /crushon - فعال‌سازی قابلیت کراش
 • /فال - دریافت فال حافظ
 • /crs - بررسی وضعیت بات
-• /gap - نمایش دستورات مخصوص گروه
+• پنل - نمایش دستورات مخصوص گروه
 • /covog - نمایش راهنما
 • /help - نمایش راهنما
 
@@ -230,13 +298,103 @@ func (r *CovoBot) handleUpdate(update tgbotapi.Update) {
 		if err := r.storage.AddGroupMember(message.Chat.ID, message.From.ID, userName); err != nil {
 			log.Printf("Error adding group member: %v", err)
 		}
+		// اگر قفل لینک فعال است، پیام‌های حاوی لینک حذف شوند
+		if enabled, err := r.storage.IsFeatureEnabled(message.Chat.ID, "link"); err == nil && enabled {
+			if containsLink(text) {
+				_, _ = r.bot.Request(tgbotapi.DeleteMessageConfig{ChatID: message.Chat.ID, MessageID: message.MessageID})
+				return
+			}
+		}
+
+		// اگر قفل فحش فعال است، پیام‌های حاوی کلمات بد حذف شوند
+		if enabled, err := r.storage.IsFeatureEnabled(message.Chat.ID, "badword"); err == nil && enabled {
+			if containsBadWord(text) {
+				_, _ = r.bot.Request(tgbotapi.DeleteMessageConfig{ChatID: message.Chat.ID, MessageID: message.MessageID})
+				return
+			}
+		}
 	}
 
 	// پردازش دستورات
 	if !strings.HasPrefix(text, "/") {
+		// «کراش» بدون اسلش -> نمایش وضعیت
+		if strings.TrimSpace(text) == "کراش" {
+			status := r.crushCommand.BuildStatusMessage(message.Chat.ID)
+			if status.ChatID != 0 {
+				_, err := r.bot.Send(status)
+				if err != nil {
+					log.Printf("خطا در ارسال وضعیت کراش: %v", err)
+				}
+			}
+			return
+		}
+		// «فال» بدون اسلش (در صورت فعال بودن قابلیت)
+		if strings.TrimSpace(text) == "فال" {
+			if enabled, err := r.storage.IsFeatureEnabled(message.Chat.ID, "hafez"); err == nil && enabled {
+				response := r.hafezCommand.Handle(update)
+				if response.ChatID != 0 {
+					_, err := r.bot.Send(response)
+					if err != nil {
+						log.Printf("خطا در ارسال پیام فال: %v", err)
+					}
+				}
+			} else {
+				notice := tgbotapi.NewMessage(message.Chat.ID, "❌ قابلیت فال در این گروه غیرفعال است")
+				_, _ = r.bot.Send(notice)
+			}
+			return
+		}
+		// پشتیبانی از «بن» روی ریپلای بدون اسلش
+		if strings.TrimSpace(text) == "بن" {
+			response := r.moderationCommand.HandleBanOnReply(update)
+			if response.ChatID != 0 {
+				_, err := r.bot.Send(response)
+				if err != nil {
+					log.Printf("خطا در ارسال پیام: %v", err)
+				}
+			}
+			return
+		}
+
 		// پشتیبانی از «حذف [n]» بدون اسلش
 		if strings.HasPrefix(text, "حذف") {
 			response := r.moderationCommand.Handle(update)
+			if response.ChatID != 0 {
+				_, err := r.bot.Send(response)
+				if err != nil {
+					log.Printf("خطا در ارسال پیام: %v", err)
+				}
+			}
+			return
+		}
+
+		// پشتیبانی از «پنل» بدون اسلش
+		if strings.TrimSpace(text) == "پنل" {
+			response := r.gapCommand.Handle(update)
+			if response.ChatID != 0 {
+				_, err := r.bot.Send(response)
+				if err != nil {
+					log.Printf("خطا در ارسال پیام: %v", err)
+				}
+			}
+			return
+		}
+
+		// پشتیبانی از «دلقک <نام>» بدون اسلش
+		if strings.HasPrefix(strings.TrimSpace(text), "دلقک") {
+			response := r.clownCommand.Handle(update)
+			if response.ChatID != 0 {
+				_, err := r.bot.Send(response)
+				if err != nil {
+					log.Printf("خطا در ارسال پیام: %v", err)
+				}
+			}
+			return
+		}
+
+		// پشتیبانی از «دلقک <نام>» بدون اسلش
+		if strings.HasPrefix(strings.TrimSpace(text), "دلقک") {
+			response := r.clownCommand.Handle(update)
 			if response.ChatID != 0 {
 				_, err := r.bot.Send(response)
 				if err != nil {
@@ -284,8 +442,7 @@ func (r *CovoBot) handleUpdate(update tgbotapi.Update) {
 		response = r.handleStartCommand(update)
 	case strings.HasPrefix(text, "/help"):
 		response = r.handleHelpCommand(update)
-	case strings.HasPrefix(text, "/gap"):
-		response = r.gapCommand.Handle(update)
+	// پشتیبانی از /gap حذف شد؛ از «پنل» بدون اسلش استفاده کنید
 	case strings.HasPrefix(text, "/فال"):
 		response = r.hafezCommand.Handle(update)
 	case strings.HasPrefix(text, "/admin"):
@@ -307,6 +464,22 @@ func (r *CovoBot) handleUpdate(update tgbotapi.Update) {
 			log.Printf("خطا در ارسال پیام: %v", err)
 		}
 	}
+}
+
+// containsLink بررسی وجود لینک در متن پیام
+func containsLink(text string) bool {
+	t := strings.ToLower(text)
+	if strings.Contains(t, "http://") || strings.Contains(t, "https://") {
+		return true
+	}
+	if strings.Contains(t, "t.me/") || strings.Contains(t, "telegram.me/") {
+		return true
+	}
+	// تشخیص ساده دامنه‌ها مانند example.com
+	if strings.Contains(t, ".com") || strings.Contains(t, ".ir") || strings.Contains(t, ".org") || strings.Contains(t, ".net") {
+		return true
+	}
+	return false
 }
 
 func (r *CovoBot) handleStartCommand(update tgbotapi.Update) tgbotapi.MessageConfig {
@@ -355,11 +528,11 @@ func (r *CovoBot) handleStartCommand(update tgbotapi.Update) tgbotapi.MessageCon
 • /covo <سوال> - هر سوالی دارید بپرسید!
 • /cj <موضوع> - جوک خنده‌دار درباره هر موضوعی تولید کن
 • /music - پیشنهاد موسیقی بر اساس سلیقه شما
-• /clown <نام> - توهین هوشمند به شخص مورد نظر
+• دلقک <نام> - توهین به شخص مورد نظر
 • /crushon - فعال‌سازی قابلیت کراش
 • /فال - دریافت فال حافظ
 • /crs - بررسی وضعیت بات
-• /gap - نمایش دستورات مخصوص گروه
+• پنل - نمایش دستورات مخصوص گروه
 • /covog - نمایش راهنما
 • /help - نمایش راهنما
 
@@ -388,7 +561,7 @@ func (r *CovoBot) handleHelpCommand(update tgbotapi.Update) tgbotapi.MessageConf
 • /covo <سوال> - هر سوالی دارید بپرسید! من پاسخ مفید می‌دهم
 • /cj <موضوع> - جوک خنده‌دار و تمیز درباره هر موضوعی تولید کن
 • /music - پیشنهاد موسیقی بر اساس سلیقه شما (با ریپلای)
-• /clown <نام> - توهین هوشمند به شخص مورد نظر
+• دلقک <نام> - توهین به شخص مورد نظر
 • /crushon - فعال‌سازی قابلیت کراش
 • /فال - دریافت فال حافظ با تفسیر
 • /crs - بررسی وضعیت بات
@@ -406,9 +579,9 @@ func (r *CovoBot) handleHelpCommand(update tgbotapi.Update) tgbotapi.MessageConf
 • خلاصه‌های هوشمند روزانه ساعت ۹ صبح ارسال می‌کند
 
 🤡 *قابلیت دلقک:*
-• دستور /clown را با نام شخص تایپ کنید
-• مثال: /clown علی یا /clown @username
-• بات با هوش مصنوعی به آن شخص توهین می‌کند
+• بنویسید: دلقک <نام>
+• مثال: دلقک علی یا دلقک @username
+• بات به‌صورت تصادفی یک پاسخ ارسال می‌کند
 
 💘 *قابلیت کراش:*
 • با /crushon قابلیت را فعال کنید

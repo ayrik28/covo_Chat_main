@@ -121,3 +121,62 @@ func (m *ModerationCommand) isUserAdmin(chatID int64, userID int64) (bool, error
 	}
 	return member.IsAdministrator() || member.IsCreator(), nil
 }
+
+// HandleBanOnReply bans the replied user permanently, only if requester is admin and target is not admin
+func (m *ModerationCommand) HandleBanOnReply(update tgbotapi.Update) tgbotapi.MessageConfig {
+	chat := update.Message.Chat
+	chatID := chat.ID
+
+	// Only in groups
+	if chat.Type != "group" && chat.Type != "supergroup" {
+		return tgbotapi.NewMessage(chatID, "❌ این دستور فقط در گروه‌ها قابل استفاده است")
+	}
+
+	// Require reply to a user's message
+	if update.Message.ReplyToMessage == nil || update.Message.ReplyToMessage.From == nil {
+		return tgbotapi.NewMessage(chatID, "لطفاً روی پیام کاربری که می‌خواهید بن شود ریپلای کنید و بنویسید: بن")
+	}
+
+	// Only group admins can use
+	isAdmin, err := m.isUserAdmin(chatID, update.Message.From.ID)
+	if err != nil {
+		log.Printf("getChatMember error (requester): %v", err)
+		return tgbotapi.NewMessage(chatID, "❌ خطا در بررسی دسترسی ادمین")
+	}
+	if !isAdmin {
+		return tgbotapi.NewMessage(chatID, "❌ فقط ادمین‌های گروه می‌توانند کاربر را بن کنند")
+	}
+
+	// Target user
+	targetUserID := update.Message.ReplyToMessage.From.ID
+
+	// Prevent banning admins
+	isTargetAdmin, err := m.isUserAdmin(chatID, targetUserID)
+	if err != nil {
+		log.Printf("getChatMember error (target): %v", err)
+		return tgbotapi.NewMessage(chatID, "❌ خطا در بررسی نقش کاربر هدف")
+	}
+	if isTargetAdmin {
+		return tgbotapi.NewMessage(chatID, "❌ امکان بن کردن ادمین یا صاحب گروه وجود ندارد")
+	}
+
+	// Perform ban (permanent)
+	banCfg := tgbotapi.BanChatMemberConfig{
+		ChatMemberConfig: tgbotapi.ChatMemberConfig{
+			ChatID: chatID,
+			UserID: targetUserID,
+		},
+		UntilDate: 0,
+	}
+
+	if _, err := m.bot.Request(banCfg); err != nil {
+		log.Printf("banChatMember error: %v", err)
+		return tgbotapi.NewMessage(chatID, "❌ بن انجام نشد. مطمئن شوید ربات دسترسی بن دارد")
+	}
+
+	// Try to delete the command message for cleanliness (ignore error)
+	_, _ = m.bot.Request(tgbotapi.DeleteMessageConfig{ChatID: chatID, MessageID: update.Message.MessageID})
+
+	// Confirmation message
+	return tgbotapi.NewMessage(chatID, "✅ کاربر موردنظر بن شد")
+}

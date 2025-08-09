@@ -50,28 +50,33 @@ func (r *CrushCommand) Handle(update tgbotapi.Update) tgbotapi.MessageConfig {
 
 	// بررسی دستور وضعیت
 	if text == "/کراشوضعیت" {
-		isEnabled, err := r.storage.IsCrushEnabled(chatID)
-		if err != nil {
-			log.Printf("Error checking crush status: %v", err)
-			return tgbotapi.NewMessage(chatID, "❌ خطا در بررسی وضعیت کراش")
-		}
-
-		var status string
-		if isEnabled {
-			status = "فعال ✅"
-		} else {
-			status = "غیرفعال ❌"
-		}
-
-		msg := tgbotapi.NewMessage(chatID, fmt.Sprintf("💘 *وضعیت قابلیت کراش:*\n\nوضعیت فعلی: %s\n\nدستورات:\n`/crushon` - فعال‌سازی\n`/crushoff` - غیرفعال‌سازی", status))
-		msg.ParseMode = tgbotapi.ModeMarkdown
-		return msg
+		return r.BuildStatusMessage(chatID)
 	}
 
 	// دستور کراش دستی حذف شد
 
 	// اگر دستور نامعتبر بود
 	msg := tgbotapi.NewMessage(chatID, "💘 *دستورات کراش:*\n\n`/crushon` - فعال‌سازی قابلیت\n`/crushoff` - غیرفعال‌سازی\n`/کراشوضعیت` - نمایش وضعیت")
+	msg.ParseMode = tgbotapi.ModeMarkdown
+	return msg
+}
+
+// BuildStatusMessage builds a status message for the crush feature
+func (r *CrushCommand) BuildStatusMessage(chatID int64) tgbotapi.MessageConfig {
+	isEnabled, err := r.storage.IsCrushEnabled(chatID)
+	if err != nil {
+		log.Printf("Error checking crush status: %v", err)
+		return tgbotapi.NewMessage(chatID, "❌ خطا در بررسی وضعیت کراش")
+	}
+
+	var status string
+	if isEnabled {
+		status = "فعال ✅"
+	} else {
+		status = "غیرفعال ❌"
+	}
+
+	msg := tgbotapi.NewMessage(chatID, fmt.Sprintf("💘 *وضعیت قابلیت کراش:*\n\nوضعیت فعلی: %s\n\nدستورات:\n`/crushon` - فعال‌سازی\n`/crushoff` - غیرفعال‌سازی", status))
 	msg.ParseMode = tgbotapi.ModeMarkdown
 	return msg
 }
