@@ -8,14 +8,16 @@ import (
 )
 
 type GapCommand struct {
-	bot     *tgbotapi.BotAPI
-	storage *storage.MySQLStorage
+	bot          *tgbotapi.BotAPI
+	storage      *storage.MySQLStorage
+	hafezCommand *HafezCommand
 }
 
-func NewGapCommand(bot *tgbotapi.BotAPI, storage *storage.MySQLStorage) *GapCommand {
+func NewGapCommand(bot *tgbotapi.BotAPI, storage *storage.MySQLStorage, hafezCommand *HafezCommand) *GapCommand {
 	return &GapCommand{
-		bot:     bot,
-		storage: storage,
+		bot:          bot,
+		storage:      storage,
+		hafezCommand: hafezCommand,
 	}
 }
 
@@ -30,6 +32,7 @@ func (r *GapCommand) Handle(update tgbotapi.Update) tgbotapi.MessageConfig {
 		// ردیف اول - دستورات اصلی
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("📊 وضعیت ربات", "status"),
+			tgbotapi.NewInlineKeyboardButtonData("📕 فال حافظ", "hafez"),
 		),
 		// ردیف دوم - دستورات کراش
 		tgbotapi.NewInlineKeyboardRow(
@@ -64,6 +67,14 @@ func (r *GapCommand) HandleCallback(update tgbotapi.Update) tgbotapi.CallbackCon
 	msg.ParseMode = tgbotapi.ModeMarkdown
 
 	switch data {
+	case "hafez":
+		// ارسال فال حافظ
+		msg.Text = "در حال دریافت فال..."
+		r.bot.Send(msg)
+		response := r.hafezCommand.Handle(update) // پاس دادن کل update
+		r.bot.Send(response)
+		return tgbotapi.NewCallback(update.CallbackQuery.ID, "✅")
+
 	case "status":
 		// نمایش وضعیت ربات
 		msg.Text = `📊 *وضعیت ربات:*
@@ -148,6 +159,7 @@ func (r *GapCommand) HandleCallback(update tgbotapi.Update) tgbotapi.CallbackCon
 • مدیریت اعضای گروه
 
 برای استفاده از هر قابلیت، روی دکمه مربوطه کلیک کنید.`
+
 	}
 
 	// ارسال پیام نتیجه

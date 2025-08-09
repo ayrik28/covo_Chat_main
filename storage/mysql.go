@@ -94,9 +94,21 @@ func cleanupDuplicateMembers(db *gorm.DB) error {
 		return fmt.Errorf("error dropping temporary table: %v", err)
 	}
 
-	// اضافه کردن ایندکس یونیک
-	if err := db.Exec("ALTER TABLE group_members ADD UNIQUE INDEX idx_group_user (group_id, user_id)").Error; err != nil {
-		return fmt.Errorf("error adding unique index: %v", err)
+	// چک کردن وجود ایندکس
+	var hasIndex bool
+	err := db.Raw(`SELECT 1 FROM information_schema.statistics 
+		WHERE table_schema = DATABASE() 
+		AND table_name = 'group_members' 
+		AND index_name = 'idx_group_user' LIMIT 1`).Scan(&hasIndex).Error
+	if err != nil {
+		return fmt.Errorf("error checking index existence: %v", err)
+	}
+
+	// اگر ایندکس وجود نداشت، اضافه کن
+	if !hasIndex {
+		if err := db.Exec("ALTER TABLE group_members ADD UNIQUE INDEX idx_group_user (group_id, user_id)").Error; err != nil {
+			return fmt.Errorf("error adding unique index: %v", err)
+		}
 	}
 
 	return nil
@@ -252,6 +264,36 @@ func (m *MySQLStorage) GetGroupMembers(groupID int64) ([]GroupMember, error) {
 }
 
 // Close database connection
+// ساختار برای لیست کاربران
+type UserInfo struct {
+	UserID int64
+	Name   string
+}
+
+// ساختار برای لیست گروه‌ها
+type GroupInfo struct {
+	GroupID   int64
+	GroupName string
+}
+
+func (m *MySQLStorage) GetAllUsers() ([]UserInfo, error) {
+	var users []UserInfo
+	err := m.db.Table("group_members").
+		Select("DISTINCT user_id, MAX(name) as name").
+		Group("user_id").
+		Find(&users).Error
+	return users, err
+}
+
+func (m *MySQLStorage) GetAllGroups() ([]GroupInfo, error) {
+	var groups []GroupInfo
+	err := m.db.Table("group_members").
+		Select("DISTINCT group_id, 'Group' as group_name").
+		Group("group_id").
+		Find(&groups).Error
+	return groups, err
+}
+
 func (m *MySQLStorage) Close() error {
 	sqlDB, err := m.db.DB()
 	if err != nil {

@@ -17,17 +17,20 @@ import (
 )
 
 type CovoBot struct {
-	bot             *tgbotapi.BotAPI
-	storage         *storage.MySQLStorage
-	rateLimiter     *limiter.RateLimiter
-	aiClient        *ai.DeepSeekClient
-	covoCommand     *commands.CovoCommand
-	covoJokeCommand *commands.CovoJokeCommand
-	musicCommand    *commands.MusicCommand
-	crsCommand      *commands.CrsCommand
-	clownCommand    *commands.ClownCommand
-	crushCommand    *commands.CrushCommand
-	gapCommand      *commands.GapCommand
+	bot               *tgbotapi.BotAPI
+	storage           *storage.MySQLStorage
+	rateLimiter       *limiter.RateLimiter
+	aiClient          *ai.DeepSeekClient
+	covoCommand       *commands.CovoCommand
+	covoJokeCommand   *commands.CovoJokeCommand
+	musicCommand      *commands.MusicCommand
+	crsCommand        *commands.CrsCommand
+	clownCommand      *commands.ClownCommand
+	crushCommand      *commands.CrushCommand
+	gapCommand        *commands.GapCommand
+	hafezCommand      *commands.HafezCommand
+	adminCommand      *commands.AdminCommand
+	moderationCommand *commands.ModerationCommand
 	// summaryScheduler *scheduler.DailySummaryScheduler
 	cron *cron.Cron
 }
@@ -65,7 +68,10 @@ func NewCovoBot() (*CovoBot, error) {
 	crsCommand := commands.NewCrsCommand(rateLimiter)
 	clownCommand := commands.NewClownCommand(aiClient, rateLimiter, bot)
 	crushCommand := commands.NewCrushCommand(storage, bot)
-	gapCommand := commands.NewGapCommand(bot, storage)
+	hafezCommand := commands.NewHafezCommand(bot)
+	adminCommand := commands.NewAdminCommand(bot, storage)
+	gapCommand := commands.NewGapCommand(bot, storage, hafezCommand)
+	moderationCommand := commands.NewModerationCommand(bot)
 
 	// راه‌اندازی زمان‌بند
 	// summaryScheduler := scheduler.NewDailySummaryScheduler(bot, storage, aiClient)
@@ -74,17 +80,20 @@ func NewCovoBot() (*CovoBot, error) {
 	cronJob := cron.New()
 
 	return &CovoBot{
-		bot:             bot,
-		storage:         storage,
-		rateLimiter:     rateLimiter,
-		aiClient:        aiClient,
-		covoCommand:     covoCommand,
-		covoJokeCommand: covoJokeCommand,
-		musicCommand:    musicCommand,
-		crsCommand:      crsCommand,
-		clownCommand:    clownCommand,
-		crushCommand:    crushCommand,
-		gapCommand:      gapCommand,
+		bot:               bot,
+		storage:           storage,
+		rateLimiter:       rateLimiter,
+		aiClient:          aiClient,
+		covoCommand:       covoCommand,
+		covoJokeCommand:   covoJokeCommand,
+		musicCommand:      musicCommand,
+		crsCommand:        crsCommand,
+		clownCommand:      clownCommand,
+		crushCommand:      crushCommand,
+		gapCommand:        gapCommand,
+		hafezCommand:      hafezCommand,
+		adminCommand:      adminCommand,
+		moderationCommand: moderationCommand,
 		// summaryScheduler: summaryScheduler,
 		cron: cronJob,
 	}, nil
@@ -126,7 +135,16 @@ func (r *CovoBot) Start() error {
 func (r *CovoBot) handleUpdate(update tgbotapi.Update) {
 	// Handle callback queries from inline keyboard
 	if update.CallbackQuery != nil {
-		callback := r.gapCommand.HandleCallback(update)
+		var callback tgbotapi.CallbackConfig
+
+		// بررسی نوع callback
+		switch {
+		case strings.HasPrefix(update.CallbackQuery.Data, "admin_"):
+			callback = r.adminCommand.HandleCallback(update)
+		default:
+			callback = r.gapCommand.HandleCallback(update)
+		}
+
 		if _, err := r.bot.Request(callback); err != nil {
 			log.Printf("Error handling callback: %v", err)
 		}
@@ -158,6 +176,7 @@ func (r *CovoBot) handleUpdate(update tgbotapi.Update) {
 • /music - پیشنهاد موسیقی بر اساس سلیقه شما
 • /clown <نام> - توهین هوشمند به شخص مورد نظر
 • /crushon - فعال‌سازی قابلیت کراش
+• /فال - دریافت فال حافظ
 • /crs - بررسی وضعیت بات
 • /gap - نمایش دستورات مخصوص گروه
 • /covog - نمایش راهنما
@@ -255,6 +274,16 @@ func (r *CovoBot) handleUpdate(update tgbotapi.Update) {
 		response = r.handleHelpCommand(update)
 	case strings.HasPrefix(text, "/gap"):
 		response = r.gapCommand.Handle(update)
+	case strings.HasPrefix(text, "/فال"):
+		response = r.hafezCommand.Handle(update)
+	case strings.HasPrefix(text, "/admin"):
+		response = r.adminCommand.Handle(update)
+	case strings.HasPrefix(text, "/showusers"):
+		response = r.adminCommand.HandleShowUsers(update)
+	case strings.HasPrefix(text, "/showgroups"):
+		response = r.adminCommand.HandleShowGroups(update)
+	case strings.HasPrefix(text, "/del"):
+		response = r.moderationCommand.HandleDelete(update)
 	default:
 		return // نادیده گرفتن دستورات ناشناخته
 	}
@@ -271,12 +300,19 @@ func (r *CovoBot) handleUpdate(update tgbotapi.Update) {
 func (r *CovoBot) handleStartCommand(update tgbotapi.Update) tgbotapi.MessageConfig {
 	chatID := update.Message.Chat.ID
 	chatType := update.Message.Chat.Type
+	userID := update.Message.From.ID
 
 	var response string
 
 	// تشخیص نوع چت و ارسال پیام مناسب
 	if chatType == "private" {
-		response = `🤖 *به بات covo خوش آمدید!*
+		// بررسی اینکه آیا کاربر ادمین است
+		if r.adminCommand.IsAdmin(userID) {
+			// پیام مخصوص ادمین‌ها
+			response = r.adminCommand.GetAdminWelcome(userID)
+		} else {
+			// پیام عادی برای کاربران
+			response = `🤖 *به بات covo خوش آمدید!*
 
 من دستیار هوشمند شما با قابلیت‌های جالب هستم:
 
@@ -284,6 +320,7 @@ func (r *CovoBot) handleStartCommand(update tgbotapi.Update) tgbotapi.MessageCon
 • /covo <سوال> - هر سوالی دارید بپرسید!
 • /cj <موضوع> - جوک خنده‌دار درباره هر موضوعی تولید کن
 • /music - پیشنهاد موسیقی بر اساس سلیقه شما
+• /فال - دریافت فال حافظ
 • /crs - بررسی وضعیت بات
 • /help - نمایش این پیام راهنما
 
@@ -295,6 +332,7 @@ func (r *CovoBot) handleStartCommand(update tgbotapi.Update) tgbotapi.MessageCon
 • پیشنهاد موسیقی هوشمند
 
 بیایید شروع کنیم! با /covo <سوال شما> چیزی از من بپرسید 🚀`
+		}
 	} else {
 		// پیام برای گروه‌ها
 		response = `🤖 *سلام! من بات covo هستم!*
@@ -307,6 +345,7 @@ func (r *CovoBot) handleStartCommand(update tgbotapi.Update) tgbotapi.MessageCon
 • /music - پیشنهاد موسیقی بر اساس سلیقه شما
 • /clown <نام> - توهین هوشمند به شخص مورد نظر
 • /crushon - فعال‌سازی قابلیت کراش
+• /فال - دریافت فال حافظ
 • /crs - بررسی وضعیت بات
 • /gap - نمایش دستورات مخصوص گروه
 • /covog - نمایش راهنما
@@ -339,6 +378,7 @@ func (r *CovoBot) handleHelpCommand(update tgbotapi.Update) tgbotapi.MessageConf
 • /music - پیشنهاد موسیقی بر اساس سلیقه شما (با ریپلای)
 • /clown <نام> - توهین هوشمند به شخص مورد نظر
 • /crushon - فعال‌سازی قابلیت کراش
+• /فال - دریافت فال حافظ با تفسیر
 • /crs - بررسی وضعیت بات
 • /gap - نمایش دستورات مخصوص گروه
 • /covog - نمایش راهنما (در گروه‌ها)
