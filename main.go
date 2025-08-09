@@ -234,6 +234,18 @@ func (r *CovoBot) handleUpdate(update tgbotapi.Update) {
 
 	// پردازش دستورات
 	if !strings.HasPrefix(text, "/") {
+		// پشتیبانی از «حذف [n]» بدون اسلش
+		if strings.HasPrefix(text, "حذف") {
+			response := r.moderationCommand.Handle(update)
+			if response.ChatID != 0 {
+				_, err := r.bot.Send(response)
+				if err != nil {
+					log.Printf("خطا در ارسال پیام: %v", err)
+				}
+			}
+			return
+		}
+
 		// بررسی ریپلای به دستور موسیقی
 		if message.ReplyToMessage != nil && message.ReplyToMessage.Text != "" {
 			replyText := message.ReplyToMessage.Text
@@ -283,7 +295,7 @@ func (r *CovoBot) handleUpdate(update tgbotapi.Update) {
 	case strings.HasPrefix(text, "/showgroups"):
 		response = r.adminCommand.HandleShowGroups(update)
 	case strings.HasPrefix(text, "/del"):
-		response = r.moderationCommand.HandleDelete(update)
+		response = r.moderationCommand.Handle(update)
 	default:
 		return // نادیده گرفتن دستورات ناشناخته
 	}
