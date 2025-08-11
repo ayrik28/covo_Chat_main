@@ -4,6 +4,7 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
@@ -179,4 +180,135 @@ func (m *ModerationCommand) HandleBanOnReply(update tgbotapi.Update) tgbotapi.Me
 
 	// Confirmation message
 	return tgbotapi.NewMessage(chatID, "✅ کاربر موردنظر بن شد")
+}
+
+// HandleMute mutes a replied user. Supports optional hours: "سکوت [n]" where n is hours. Without n -> indefinite.
+func (m *ModerationCommand) HandleMute(update tgbotapi.Update) tgbotapi.MessageConfig {
+	chat := update.Message.Chat
+	chatID := chat.ID
+
+	if chat.Type != "group" && chat.Type != "supergroup" {
+		return tgbotapi.NewMessage(chatID, "❌ این دستور فقط در گروه‌ها قابل استفاده است")
+	}
+
+	// Only group admins can use
+	isAdmin, err := m.isUserAdmin(chatID, update.Message.From.ID)
+	if err != nil {
+		log.Printf("getChatMember error (requester): %v", err)
+		return tgbotapi.NewMessage(chatID, "❌ خطا در بررسی دسترسی ادمین")
+	}
+	if !isAdmin {
+		return tgbotapi.NewMessage(chatID, "❌ فقط ادمین‌های گروه می‌توانند کاربر را سکوت کنند")
+	}
+
+	if update.Message.ReplyToMessage == nil || update.Message.ReplyToMessage.From == nil {
+		return tgbotapi.NewMessage(chatID, "لطفاً روی پیام کاربری که می‌خواهید سکوت شود ریپلای کنید و بنویسید: سکوت [ساعت]")
+	}
+
+	targetUserID := update.Message.ReplyToMessage.From.ID
+
+	// Prevent muting admins
+	isTargetAdmin, err := m.isUserAdmin(chatID, targetUserID)
+	if err != nil {
+		log.Printf("getChatMember error (target): %v", err)
+		return tgbotapi.NewMessage(chatID, "❌ خطا در بررسی نقش کاربر هدف")
+	}
+	if isTargetAdmin {
+		return tgbotapi.NewMessage(chatID, "❌ امکان سکوت کردن ادمین یا صاحب گروه وجود ندارد")
+	}
+
+	// Parse optional hours
+	var until int64 = 0
+	fields := strings.Fields(strings.TrimSpace(update.Message.Text))
+	if len(fields) > 1 {
+		if hours, err := strconv.Atoi(fields[1]); err == nil && hours > 0 {
+			until = time.Now().Add(time.Duration(hours) * time.Hour).Unix()
+		}
+	}
+
+	restrictCfg := tgbotapi.RestrictChatMemberConfig{
+		ChatMemberConfig: tgbotapi.ChatMemberConfig{
+			ChatID: chatID,
+			UserID: targetUserID,
+		},
+		Permissions: &tgbotapi.ChatPermissions{
+			CanSendMessages:       false,
+			CanSendMediaMessages:  false,
+			CanSendPolls:          false,
+			CanSendOtherMessages:  false,
+			CanAddWebPagePreviews: false,
+			CanChangeInfo:         false,
+			CanInviteUsers:        false,
+			CanPinMessages:        false,
+		},
+		UntilDate: until,
+	}
+
+	if _, err := m.bot.Request(restrictCfg); err != nil {
+		log.Printf("restrictChatMember error: %v", err)
+		return tgbotapi.NewMessage(chatID, "❌ سکوت انجام نشد. مطمئن شوید ربات دسترسی مناسب دارد")
+	}
+
+	// Try to delete the command message for cleanliness (ignore error)
+	_, _ = m.bot.Request(tgbotapi.DeleteMessageConfig{ChatID: chatID, MessageID: update.Message.MessageID})
+
+	if until == 0 {
+		return tgbotapi.NewMessage(chatID, "✅ کاربر موردنظر به‌صورت نامحدود سکوت شد")
+	}
+	return tgbotapi.NewMessage(chatID, "✅ کاربر موردنظر سکوت شد")
+}
+
+// HandleUnmute lifts mute restrictions from a replied user: "آزاد" on reply.
+func (m *ModerationCommand) HandleUnmute(update tgbotapi.Update) tgbotapi.MessageConfig {
+	chat := update.Message.Chat
+	chatID := chat.ID
+
+	if chat.Type != "group" && chat.Type != "supergroup" {
+		return tgbotapi.NewMessage(chatID, "❌ این دستور فقط در گروه‌ها قابل استفاده است")
+	}
+
+	// Only group admins can use
+	isAdmin, err := m.isUserAdmin(chatID, update.Message.From.ID)
+	if err != nil {
+		log.Printf("getChatMember error (requester): %v", err)
+		return tgbotapi.NewMessage(chatID, "❌ خطا در بررسی دسترسی ادمین")
+	}
+	if !isAdmin {
+		return tgbotapi.NewMessage(chatID, "❌ فقط ادمین‌های گروه می‌توانند کاربر را از سکوت خارج کنند")
+	}
+
+	if update.Message.ReplyToMessage == nil || update.Message.ReplyToMessage.From == nil {
+		return tgbotapi.NewMessage(chatID, "لطفاً روی پیام کاربری که می‌خواهید از سکوت خارج شود ریپلای کنید و بنویسید: آزاد")
+	}
+
+	targetUserID := update.Message.ReplyToMessage.From.ID
+
+	// Lift restrictions by allowing messaging-related permissions
+	unrestrictCfg := tgbotapi.RestrictChatMemberConfig{
+		ChatMemberConfig: tgbotapi.ChatMemberConfig{
+			ChatID: chatID,
+			UserID: targetUserID,
+		},
+		Permissions: &tgbotapi.ChatPermissions{
+			CanSendMessages:       true,
+			CanSendMediaMessages:  true,
+			CanSendPolls:          true,
+			CanSendOtherMessages:  true,
+			CanAddWebPagePreviews: true,
+			CanChangeInfo:         false,
+			CanInviteUsers:        false,
+			CanPinMessages:        false,
+		},
+		UntilDate: 0,
+	}
+
+	if _, err := m.bot.Request(unrestrictCfg); err != nil {
+		log.Printf("restrictChatMember (unmute) error: %v", err)
+		return tgbotapi.NewMessage(chatID, "❌ آزاد کردن انجام نشد. مطمئن شوید ربات دسترسی مناسب دارد")
+	}
+
+	// Try to delete the command message (ignore error)
+	_, _ = m.bot.Request(tgbotapi.DeleteMessageConfig{ChatID: chatID, MessageID: update.Message.MessageID})
+
+	return tgbotapi.NewMessage(chatID, "✅ کاربر از سکوت خارج شد")
 }

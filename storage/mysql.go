@@ -186,6 +186,53 @@ func (m *MySQLStorage) ClearGroupMessages(groupID int64) error {
 	return m.db.Where("group_id = ?", groupID).Delete(&GroupMessage{}).Error
 }
 
+// Stats and Analytics (24h)
+// UserMessageCount holds aggregated count of messages for a user in last 24 hours
+type UserMessageCount struct {
+	UserID   int64
+	Username string
+	Count    int64
+}
+
+// GetUserMessageCountLast24h returns the number of messages a specific user has sent
+// in the specified group during the last 24 hours.
+func (m *MySQLStorage) GetUserMessageCountLast24h(groupID int64, userID int64) (int64, error) {
+	cutoff := time.Now().Add(-24 * time.Hour)
+	var count int64
+	err := m.db.Model(&GroupMessage{}).
+		Where("group_id = ? AND user_id = ? AND timestamp >= ?", groupID, userID, cutoff).
+		Count(&count).Error
+	return count, err
+}
+
+// GetTopActiveUsersLast24h returns top N users with most messages in the last 24 hours for a group
+func (m *MySQLStorage) GetTopActiveUsersLast24h(groupID int64, limit int) ([]UserMessageCount, error) {
+	cutoff := time.Now().Add(-24 * time.Hour)
+	var results []UserMessageCount
+	// Use MAX(username) to pick a representative username for the user
+	err := m.db.Table("group_messages").
+		Select("user_id as user_id, MAX(username) as username, COUNT(*) as count").
+		Where("group_id = ? AND timestamp >= ?", groupID, cutoff).
+		Group("user_id").
+		Order("count DESC").
+		Limit(limit).
+		Scan(&results).Error
+	return results, err
+}
+
+// GetAllActiveUsersLast24h returns all users with message counts in the last 24 hours for a group
+func (m *MySQLStorage) GetAllActiveUsersLast24h(groupID int64) ([]UserMessageCount, error) {
+	cutoff := time.Now().Add(-24 * time.Hour)
+	var results []UserMessageCount
+	err := m.db.Table("group_messages").
+		Select("user_id as user_id, MAX(username) as username, COUNT(*) as count").
+		Where("group_id = ? AND timestamp >= ?", groupID, cutoff).
+		Group("user_id").
+		Order("count DESC").
+		Scan(&results).Error
+	return results, err
+}
+
 // Feature Settings Methods
 func (m *MySQLStorage) IsFeatureEnabled(chatID int64, feature string) (bool, error) {
 	var setting FeatureSetting

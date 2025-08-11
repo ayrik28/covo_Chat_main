@@ -1,7 +1,9 @@
 package commands
 
 import (
+	"fmt"
 	"redhat-bot/storage"
+	"strings"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
@@ -37,6 +39,14 @@ func (r *GapCommand) Handle(update tgbotapi.Update) tgbotapi.MessageConfig {
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("🔒 قفل", "locks"),
 		),
+		// ردیف سوم - آمار پیام
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("📈 آمار پیام ۲۴ساعت", "stats_menu"),
+		),
+		// ردیف چهارم مکرر - سکوت
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("🔇 سکوت کاربر (راهنما)", "mute_help"),
+		),
 		// ردیف پنجم - راهنما
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("📚 راهنمای کامل", "full_help"),
@@ -61,9 +71,10 @@ func (r *GapCommand) HandleCallback(update tgbotapi.Update) tgbotapi.CallbackCon
 
 	switch data {
 	case "features":
-		// نمایش دکمه‌های قابلیت‌ها (کِراش و فال)
+		// نمایش دکمه‌های قابلیت‌ها (کِراش و فال و آمار)
 		crushEnabled, _ := r.storage.IsCrushEnabled(chatID)
 		hafezEnabled, _ := r.storage.IsFeatureEnabled(chatID, "hafez")
+		statsEnabled, _ := r.storage.IsFeatureEnabled(chatID, "stats")
 
 		crushIcon := "❌"
 		if crushEnabled {
@@ -74,10 +85,22 @@ func (r *GapCommand) HandleCallback(update tgbotapi.Update) tgbotapi.CallbackCon
 			hafezIcon = "✅"
 		}
 
+		statsIcon := "❌"
+		if statsEnabled {
+			statsIcon = "✅"
+		}
+
 		featuresKeyboard := tgbotapi.NewInlineKeyboardMarkup(
 			tgbotapi.NewInlineKeyboardRow(
 				tgbotapi.NewInlineKeyboardButtonData("💘 کراش "+crushIcon, "toggle_crush"),
 				tgbotapi.NewInlineKeyboardButtonData("📕 فال "+hafezIcon, "toggle_hafez"),
+			),
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("📈 آمار پیام "+statsIcon, "toggle_stats"),
+				tgbotapi.NewInlineKeyboardButtonData("📋 نمایش همه کاربران", "show_stats_all"),
+			),
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("🙋‍♂️ آمار من", "show_my_stats"),
 			),
 		)
 		msg.Text = "🎛️ تنظیمات قابلیت‌ها:\n\nبا دکمه‌های زیر می‌توانید قابلیت‌ها را فعال/غیرفعال کنید."
@@ -114,6 +137,7 @@ func (r *GapCommand) HandleCallback(update tgbotapi.Update) tgbotapi.CallbackCon
 		// بازسازی کیبورد قابلیت‌ها
 		crushEnabled, _ := r.storage.IsCrushEnabled(chatID)
 		hafezEnabled, _ := r.storage.IsFeatureEnabled(chatID, "hafez")
+		statsEnabled, _ := r.storage.IsFeatureEnabled(chatID, "stats")
 		crushIcon := "❌"
 		if crushEnabled {
 			crushIcon = "✅"
@@ -122,10 +146,21 @@ func (r *GapCommand) HandleCallback(update tgbotapi.Update) tgbotapi.CallbackCon
 		if hafezEnabled {
 			hafezIcon = "✅"
 		}
+		statsIcon := "❌"
+		if statsEnabled {
+			statsIcon = "✅"
+		}
 		featuresKeyboard := tgbotapi.NewInlineKeyboardMarkup(
 			tgbotapi.NewInlineKeyboardRow(
 				tgbotapi.NewInlineKeyboardButtonData("💘 کراش "+crushIcon, "toggle_crush"),
 				tgbotapi.NewInlineKeyboardButtonData("📕 فال "+hafezIcon, "toggle_hafez"),
+			),
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("📈 آمار پیام "+statsIcon, "toggle_stats"),
+				tgbotapi.NewInlineKeyboardButtonData("📋 نمایش همه کاربران", "show_stats_all"),
+			),
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("🙋‍♂️ آمار من", "show_my_stats"),
 			),
 		)
 		msg.ReplyMarkup = featuresKeyboard
@@ -144,6 +179,7 @@ func (r *GapCommand) HandleCallback(update tgbotapi.Update) tgbotapi.CallbackCon
 		// بازسازی کیبورد قابلیت‌ها
 		crushEnabled, _ := r.storage.IsCrushEnabled(chatID)
 		hafezEnabled, _ := r.storage.IsFeatureEnabled(chatID, "hafez")
+		statsEnabled, _ := r.storage.IsFeatureEnabled(chatID, "stats")
 		crushIcon := "❌"
 		if crushEnabled {
 			crushIcon = "✅"
@@ -152,14 +188,154 @@ func (r *GapCommand) HandleCallback(update tgbotapi.Update) tgbotapi.CallbackCon
 		if hafezEnabled {
 			hafezIcon = "✅"
 		}
+		statsIcon := "❌"
+		if statsEnabled {
+			statsIcon = "✅"
+		}
 		featuresKeyboard := tgbotapi.NewInlineKeyboardMarkup(
 			tgbotapi.NewInlineKeyboardRow(
 				tgbotapi.NewInlineKeyboardButtonData("💘 کراش "+crushIcon, "toggle_crush"),
 				tgbotapi.NewInlineKeyboardButtonData("📕 فال "+hafezIcon, "toggle_hafez"),
 			),
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("📈 آمار پیام "+statsIcon, "toggle_stats"),
+				tgbotapi.NewInlineKeyboardButtonData("📋 نمایش همه کاربران", "show_stats_all"),
+			),
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("🙋‍♂️ آمار من", "show_my_stats"),
+			),
 		)
 		msg.Text = "وضعیت قابلیت‌ها بروز شد."
 		msg.ReplyMarkup = featuresKeyboard
+
+	case "stats_menu":
+		// نمایش وضعیت آمار و میانبرها
+		enabled, _ := r.storage.IsFeatureEnabled(chatID, "stats")
+		icon := "❌"
+		if enabled {
+			icon = "✅"
+		}
+		kb := tgbotapi.NewInlineKeyboardMarkup(
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("📈 آمار پیام "+icon, "toggle_stats"),
+				tgbotapi.NewInlineKeyboardButtonData("📋 نمایش همه کاربران", "show_stats_all"),
+			),
+		)
+		msg.Text = "📈 آمار پیام‌های ۲۴ ساعت گذشته"
+		msg.ReplyMarkup = kb
+
+	case "toggle_stats":
+		enabled, err := r.storage.IsFeatureEnabled(chatID, "stats")
+		if err != nil {
+			msg.Text = "❌ خطا در بررسی وضعیت آمار"
+			break
+		}
+		if err := r.storage.SetFeatureEnabled(chatID, "stats", !enabled); err != nil {
+			msg.Text = "❌ خطا در تغییر وضعیت آمار"
+			break
+		}
+		newEnabled, _ := r.storage.IsFeatureEnabled(chatID, "stats")
+		icon := "❌"
+		if newEnabled {
+			icon = "✅"
+		}
+		kb := tgbotapi.NewInlineKeyboardMarkup(
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("📈 آمار پیام "+icon, "toggle_stats"),
+				tgbotapi.NewInlineKeyboardButtonData("👑 نمایش ۱۰ کاربر برتر", "show_stats"),
+			),
+		)
+		msg.Text = "وضعیت آمار پیام بروز شد."
+		msg.ReplyMarkup = kb
+
+	case "show_stats":
+		// چک فعال بودن قابلیت
+		enabled, _ := r.storage.IsFeatureEnabled(chatID, "stats")
+		if !enabled {
+			msg.Text = "ℹ️ آمار پیام‌ها غیر فعال است. ابتدا آن را فعال کنید."
+			break
+		}
+		// دریافت ۱۰ کاربر برتر
+		top, err := r.storage.GetTopActiveUsersLast24h(chatID, 10)
+		if err != nil {
+			msg.Text = "❌ خطا در دریافت آمار"
+			break
+		}
+		if len(top) == 0 {
+			msg.Text = "⏳ در ۲۴ ساعت گذشته پیامی ثبت نشده است."
+			break
+		}
+		var b strings.Builder
+		b.WriteString(fmt.Sprintf("👑 %d کاربر برتر ۲۴ ساعت گذشته:\n\n", len(top)))
+		for i, u := range top {
+			name := u.Username
+			if name == "" {
+				name = fmt.Sprintf("User %d", u.UserID)
+			}
+			b.WriteString(fmt.Sprintf("%d) %s — %d پیام\n", i+1, name, u.Count))
+		}
+		msg.Text = b.String()
+
+	case "show_stats_all":
+		// چک فعال بودن قابلیت
+		enabled, _ := r.storage.IsFeatureEnabled(chatID, "stats")
+		if !enabled {
+			msg.Text = "ℹ️ آمار پیام‌ها غیر فعال است. ابتدا آن را فعال کنید."
+			break
+		}
+		// دریافت همه کاربران فعال ۲۴ ساعت گذشته
+		all, err := r.storage.GetAllActiveUsersLast24h(chatID)
+		if err != nil {
+			msg.Text = "❌ خطا در دریافت آمار"
+			break
+		}
+		if len(all) == 0 {
+			msg.Text = "⏳ در ۲۴ ساعت گذشته پیامی ثبت نشده است."
+			break
+		}
+		// چون ممکن است طولانی باشد، در چند بخش ارسال می‌کنیم (هر پیام حداکثر ~50 کاربر)
+		const pageSize = 50
+		for start := 0; start < len(all); start += pageSize {
+			end := start + pageSize
+			if end > len(all) {
+				end = len(all)
+			}
+			var sb strings.Builder
+			sb.WriteString(fmt.Sprintf("📋 کاربران فعال (%d-%d از %d):\n\n", start+1, end, len(all)))
+			for i := start; i < end; i++ {
+				u := all[i]
+				name := u.Username
+				if name == "" {
+					name = fmt.Sprintf("User %d", u.UserID)
+				}
+				sb.WriteString(fmt.Sprintf("%d) %s — %d پیام\n", i+1, name, u.Count))
+			}
+			part := tgbotapi.NewMessage(chatID, sb.String())
+			part.ParseMode = tgbotapi.ModeMarkdown
+			r.bot.Send(part)
+		}
+		// پیام اصلی را خلاصه می‌کنیم
+		msg.Text = fmt.Sprintf("✅ مجموع کاربران فعال: %d", len(all))
+
+	case "show_my_stats":
+		// چک فعال بودن قابلیت
+		enabled, _ := r.storage.IsFeatureEnabled(chatID, "stats")
+		if !enabled {
+			msg.Text = "ℹ️ آمار پیام‌ها غیر فعال است. ابتدا آن را فعال کنید."
+			break
+		}
+		// شناسه کاربری شخصی که دکمه را زده
+		userID := update.CallbackQuery.From.ID
+		count, err := r.storage.GetUserMessageCountLast24h(chatID, userID)
+		if err != nil {
+			msg.Text = "❌ خطا در دریافت آمار کاربر"
+			break
+		}
+		name := update.CallbackQuery.From.UserName
+		if name == "" {
+			name = update.CallbackQuery.From.FirstName
+		}
+		msg.Text = fmt.Sprintf("📈 آمار ۲۴ساعت: %s — %d پیام", name, count)
 
 	case "clown_help":
 		msg.Text = `🤡 *راهنمای قابلیت دلقک*
@@ -200,9 +376,27 @@ func (r *GapCommand) HandleCallback(update tgbotapi.Update) tgbotapi.CallbackCon
 					}
 				}(), "toggle_badword"),
 			),
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("🔇 راهنمای سکوت", "mute_help"),
+			),
 		)
 		msg.Text = "🔒 تنظیمات قفل‌ها:\n\nبا دکمه‌های زیر می‌توانید قفل‌ها را فعال/غیرفعال کنید."
 		msg.ReplyMarkup = locksKeyboard
+
+	case "mute_help":
+		msg.Text = `🔇 راهنمای سکوت کاربر
+
+برای سکوت کردن یک کاربر:
+1) روی پیام او ریپلای کنید
+2) بدون اسلش بنویسید: سکوت [ساعت]
+
+نمونه‌ها:
+- سکوت 1  (سکوت یک‌ساعته)
+- سکوت    (سکوت نامحدود)
+
+برای خارج کردن از سکوت:
+1) روی پیام او ریپلای کنید
+2) بنویسید: آزاد`
 
 	case "toggle_clown":
 		// تغییر وضعیت دلقک

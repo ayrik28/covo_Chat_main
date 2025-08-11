@@ -356,6 +356,30 @@ func (r *CovoBot) handleUpdate(update tgbotapi.Update) {
 			return
 		}
 
+		// پشتیبانی از «سکوت [n]» روی ریپلای بدون اسلش (n = ساعت)
+		if strings.HasPrefix(strings.TrimSpace(text), "سکوت") {
+			response := r.moderationCommand.HandleMute(update)
+			if response.ChatID != 0 {
+				_, err := r.bot.Send(response)
+				if err != nil {
+					log.Printf("خطا در ارسال پیام: %v", err)
+				}
+			}
+			return
+		}
+
+		// پشتیبانی از «آزاد» روی ریپلای بدون اسلش
+		if strings.TrimSpace(text) == "ازاد" {
+			response := r.moderationCommand.HandleUnmute(update)
+			if response.ChatID != 0 {
+				_, err := r.bot.Send(response)
+				if err != nil {
+					log.Printf("خطا در ارسال پیام: %v", err)
+				}
+			}
+			return
+		}
+
 		// پشتیبانی از «حذف [n]» بدون اسلش
 		if strings.HasPrefix(text, "حذف") {
 			response := r.moderationCommand.Handle(update)
