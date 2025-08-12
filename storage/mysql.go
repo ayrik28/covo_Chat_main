@@ -38,6 +38,40 @@ type FeatureSetting struct {
 	Enabled     bool
 }
 
+// UserOnboarding برای ارسال یک‌باره پیام عضویت در اولین استارت
+type UserOnboarding struct {
+	UserID    int64     `gorm:"primaryKey"`
+	PromoSent bool      `gorm:"default:false"`
+	SentAt    time.Time `gorm:"index"`
+}
+
+// BotChannel نگهداری اطلاعات کانال‌هایی که ربات در آن‌ها حضور دارد
+type BotChannel struct {
+	ID          uint  `gorm:"primaryKey"`
+	ChatID      int64 `gorm:"uniqueIndex;column:chat_id"`
+	Title       string
+	Username    string    `gorm:"index"`
+	IsAdmin     bool      `gorm:"default:false;column:is_admin"`
+	MemberCount int       `gorm:"default:0"`
+	DateAdded   time.Time `gorm:"index;column:date_added"`
+	LastCheck   time.Time `gorm:"index;column:last_check"`
+}
+
+// RequiredChannel نگهداری لینک/کانال‌های الزام عضویت (جهانی یا بر اساس گروه)
+type RequiredChannel struct {
+	ID              uint  `gorm:"primaryKey"`
+	GroupID         int64 `gorm:"index"` // 0: سراسری
+	Title           string
+	Link            string
+	ChannelUsername string `gorm:"index"`                // مثال: mychannel بدون @
+	ChannelID       int64  `gorm:"index"`                // اگر شناسه عددی موجود است
+	ChatID          int64  `gorm:"index;column:chat_id"` // chat_id عددی کانال/گروه
+	BotJoined       bool   `gorm:"default:false"`
+	MemberCount     int    `gorm:"default:0"`
+	CreatedAt       time.Time
+	LastChecked     time.Time
+}
+
 type MySQLStorage struct {
 	db *gorm.DB
 }
@@ -57,7 +91,7 @@ func NewMySQLStorage(host, port, user, password, dbname string) (*MySQLStorage, 
 	}
 
 	// Auto Migrate the schemas
-	if err := db.AutoMigrate(&UserUsage{}, &GroupMessage{}, &GroupMember{}, &FeatureSetting{}); err != nil {
+	if err := db.AutoMigrate(&UserUsage{}, &GroupMessage{}, &GroupMember{}, &FeatureSetting{}, &RequiredChannel{}, &UserOnboarding{}, &BotChannel{}); err != nil {
 		return nil, fmt.Errorf("error migrating database: %v", err)
 	}
 
@@ -347,4 +381,118 @@ func (m *MySQLStorage) Close() error {
 		return err
 	}
 	return sqlDB.Close()
+}
+
+// BotChannels methods
+
+// UpsertBotChannel ثبت/به‌روزرسانی اطلاعات کانال ربات
+func (m *MySQLStorage) UpsertBotChannel(chatID int64, title string, username string, isAdmin bool, memberCount int) error {
+	var bc BotChannel
+	if err := m.db.Where("chat_id = ?", chatID).First(&bc).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			bc = BotChannel{
+				ChatID:      chatID,
+				Title:       title,
+				Username:    username,
+				IsAdmin:     isAdmin,
+				MemberCount: memberCount,
+				DateAdded:   time.Now(),
+				LastCheck:   time.Now(),
+			}
+			return m.db.Create(&bc).Error
+		}
+		return err
+	}
+	// update
+	bc.Title = title
+	bc.Username = username
+	bc.IsAdmin = isAdmin
+	bc.MemberCount = memberCount
+	bc.LastCheck = time.Now()
+	return m.db.Save(&bc).Error
+}
+
+// ListBotChannels لیست تمام کانال‌هایی که ربات در آن‌ها حضور دارد
+func (m *MySQLStorage) ListBotChannels() ([]BotChannel, error) {
+	var list []BotChannel
+	if err := m.db.Order("date_added ASC").Find(&list).Error; err != nil {
+		return nil, err
+	}
+	return list, nil
+}
+
+// WasPromoSent اولین استارت را چک می‌کند (آیا پیام عضویت قبلاً برای کاربر ارسال شده؟)
+func (m *MySQLStorage) WasPromoSent(userID int64) (bool, error) {
+	var rec UserOnboarding
+	if err := m.db.First(&rec, "user_id = ?", userID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return false, nil
+		}
+		return false, err
+	}
+	return rec.PromoSent, nil
+}
+
+// MarkPromoSent علامت‌گذاری ارسال پیام عضویت برای کاربر
+func (m *MySQLStorage) MarkPromoSent(userID int64) error {
+	rec := UserOnboarding{UserID: userID, PromoSent: true, SentAt: time.Now()}
+	return m.db.Save(&rec).Error
+}
+
+// Required membership methods
+
+// AddRequiredChannel اضافه/آپدیت یک لینک الزام عضویت (بر اساس GroupID و ChannelUsername/Link)
+func (m *MySQLStorage) AddRequiredChannel(groupID int64, title string, link string, channelUsername string, channelID int64) error {
+	rc := RequiredChannel{
+		GroupID:         groupID,
+		Title:           title,
+		Link:            link,
+		ChannelUsername: channelUsername,
+		ChannelID:       channelID,
+		ChatID:          channelID,
+	}
+	return m.db.Create(&rc).Error
+}
+
+// RemoveRequiredChannel حذف بر اساس ID رکورد
+func (m *MySQLStorage) RemoveRequiredChannel(id uint) error {
+	return m.db.Delete(&RequiredChannel{}, id).Error
+}
+
+// ListRequiredChannels لیست لینک‌های الزام عضویت برای یک گروه (به‌همراه لینک‌های سراسری group_id=0)
+func (m *MySQLStorage) ListRequiredChannels(groupID int64) ([]RequiredChannel, error) {
+	var list []RequiredChannel
+	if err := m.db.Where("group_id = ? OR group_id = 0", groupID).Order("id ASC").Find(&list).Error; err != nil {
+		return nil, err
+	}
+	return list, nil
+}
+
+// UpdateRequiredChannelStatus به‌روزرسانی وضعیت عضویت ربات و تعداد اعضا برای یک کانال
+func (m *MySQLStorage) UpdateRequiredChannelStatus(id uint, botJoined bool, memberCount int) error {
+	return m.db.Model(&RequiredChannel{}).Where("id = ?", id).
+		Updates(map[string]interface{}{
+			"bot_joined":   botJoined,
+			"member_count": memberCount,
+			"last_checked": time.Now(),
+		}).Error
+}
+
+// UpdateRequiredChannelResolved به‌روزرسانی متادیتای کانال (ChannelID/Username/Title)
+func (m *MySQLStorage) UpdateRequiredChannelResolved(id uint, channelID int64, username string, title string) error {
+	updates := map[string]interface{}{}
+	if channelID != 0 {
+		updates["channel_id"] = channelID
+		updates["chat_id"] = channelID
+	}
+	if username != "" {
+		updates["channel_username"] = username
+	}
+	if title != "" {
+		updates["title"] = title
+	}
+	if len(updates) == 0 {
+		return nil
+	}
+	return m.db.Model(&RequiredChannel{}).Where("id = ?", id).Updates(updates).Error
 }

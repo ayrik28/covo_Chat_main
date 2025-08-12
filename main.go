@@ -35,6 +35,8 @@ type CovoBot struct {
 	hafezCommand      *commands.HafezCommand
 	adminCommand      *commands.AdminCommand
 	moderationCommand *commands.ModerationCommand
+	truthDareCommand  *commands.TruthDareCommand
+	tagCommand        *commands.TagCommand
 	// summaryScheduler *scheduler.DailySummaryScheduler
 	cron *cron.Cron
 }
@@ -131,6 +133,8 @@ func NewCovoBot() (*CovoBot, error) {
 	adminCommand := commands.NewAdminCommand(bot, storage)
 	gapCommand := commands.NewGapCommand(bot, storage, hafezCommand)
 	moderationCommand := commands.NewModerationCommand(bot)
+	truthDareCommand := commands.NewTruthDareCommand(bot, adminCommand)
+	tagCommand := commands.NewTagCommand(bot, storage)
 
 	// راه‌اندازی زمان‌بند
 	// summaryScheduler := scheduler.NewDailySummaryScheduler(bot, storage, aiClient)
@@ -153,6 +157,8 @@ func NewCovoBot() (*CovoBot, error) {
 		hafezCommand:      hafezCommand,
 		adminCommand:      adminCommand,
 		moderationCommand: moderationCommand,
+		truthDareCommand:  truthDareCommand,
+		tagCommand:        tagCommand,
 		// summaryScheduler: summaryScheduler,
 		cron: cronJob,
 	}, nil
@@ -192,14 +198,63 @@ func (r *CovoBot) Start() error {
 }
 
 func (r *CovoBot) handleUpdate(update tgbotapi.Update) {
+	// Handle my_chat_member updates (bot status in chats/channels changes)
+	if update.MyChatMember != nil {
+		r.handleMyChatMember(update)
+		return
+	}
 	// Handle callback queries from inline keyboard
 	if update.CallbackQuery != nil {
 		var callback tgbotapi.CallbackConfig
 
 		// بررسی نوع callback
+		// گیت عضویت برای تمام کال‌بک‌ها به جز موارد ادمین و بررسی عضویت
+		if !(strings.HasPrefix(update.CallbackQuery.Data, "admin_") || strings.HasPrefix(update.CallbackQuery.Data, "admin_check_join")) {
+			if ok, prompt := r.checkRequiredMembershipAndPromptUser(update.CallbackQuery.Message.Chat.ID, update.CallbackQuery.From.ID); !ok {
+				if prompt.ChatID != 0 {
+					_, _ = r.bot.Send(prompt)
+				}
+				// ارسال ack کوتاه
+				callback = tgbotapi.NewCallback(update.CallbackQuery.ID, "برای استفاده، ابتدا عضو کانال‌ها شوید")
+				if _, err := r.bot.Request(callback); err != nil {
+					log.Printf("Error handling callback: %v", err)
+				}
+				return
+			}
+		}
 		switch {
+		case strings.HasPrefix(update.CallbackQuery.Data, "admin_check_join"):
+			// دکمه «بررسی عضویت» از پیام عضویت اجباری
+			// تلاش مجدد برای بررسی
+			dummy := tgbotapi.NewCallback(update.CallbackQuery.ID, "در حال بررسی...")
+			if _, err := r.bot.Request(dummy); err != nil {
+				log.Printf("callback ack error: %v", err)
+			}
+			// در PM ممکن است کاربر بخواهد مستقیم شروع کند
+			if ok, prompt := r.checkRequiredMembershipAndPromptUser(update.CallbackQuery.Message.Chat.ID, update.CallbackQuery.From.ID); ok {
+				// تایید عضویت
+				notice := tgbotapi.NewMessage(update.CallbackQuery.Message.Chat.ID, "✅ عضویت شما تایید شد. حالا می‌توانید از دستورات استفاده کنید.")
+				_, _ = r.bot.Send(notice)
+				return
+			} else {
+				if prompt.ChatID != 0 {
+					_, _ = r.bot.Send(prompt)
+				}
+				return
+			}
 		case strings.HasPrefix(update.CallbackQuery.Data, "admin_"):
 			callback = r.adminCommand.HandleCallback(update)
+		case strings.HasPrefix(update.CallbackQuery.Data, "td_"):
+			// گیت عضویت برای کلیک‌های بازی
+			if ok, prompt := r.checkRequiredMembershipAndPromptUser(update.CallbackQuery.Message.Chat.ID, update.CallbackQuery.From.ID); !ok {
+				if prompt.ChatID != 0 {
+					_, _ = r.bot.Send(prompt)
+				}
+				// ارسال ack کوتاه
+				callback = tgbotapi.NewCallback(update.CallbackQuery.ID, "برای استفاده، ابتدا عضو کانال‌ها شوید")
+				break
+			}
+			callback = r.truthDareCommand.HandleCallback(update)
 		default:
 			callback = r.gapCommand.HandleCallback(update)
 		}
@@ -315,8 +370,50 @@ func (r *CovoBot) handleUpdate(update tgbotapi.Update) {
 		}
 	}
 
+	// اگر پیام خصوصی از ادمین و در حالت افزودن لینک بود، قبل از هرچیز آن را هندل کن
+	if message.Chat.Type == "private" && r.adminCommand.IsAdmin(message.From.ID) && r.adminCommand.HasPendingAdd(message.From.ID) {
+		resp := r.adminCommand.HandlePrivateTextInput(update)
+		if resp.ChatID != 0 {
+			_, _ = r.bot.Send(resp)
+		}
+		return
+	}
+
 	// پردازش دستورات
 	if !strings.HasPrefix(text, "/") {
+		// اگر یکی از تریگرهای اکشن بود، ابتدا گیت عضویت را بررسی کن
+		trimmed := strings.TrimSpace(text)
+		if trimmed == "پنل" || trimmed == "بازی" || trimmed == "توقف بازی" || trimmed == "کراش" || trimmed == "فال" || trimmed == "تگ" || strings.HasPrefix(trimmed, "دلقک") || strings.HasPrefix(trimmed, "سکوت") || trimmed == "ازاد" || strings.HasPrefix(trimmed, "حذف") {
+			if ok, prompt := r.checkRequiredMembershipAndPromptUser(message.Chat.ID, message.From.ID); !ok {
+				if prompt.ChatID != 0 {
+					_, _ = r.bot.Send(prompt)
+				}
+				return
+			}
+		}
+		// «بازی» بدون اسلش -> شروع روم (فقط ادمین)
+		if strings.TrimSpace(text) == "بازی" {
+			response := r.truthDareCommand.HandleStartWithoutSlash(update)
+			if response.ChatID != 0 {
+				_, err := r.bot.Send(response)
+				if err != nil {
+					log.Printf("خطا در ارسال پیام بازی: %v", err)
+				}
+			}
+			return
+		}
+
+		// «توقف بازی» بدون اسلش -> توقف کامل (فقط ادمین)
+		if strings.TrimSpace(text) == "توقف بازی" {
+			response := r.truthDareCommand.HandleStopWithoutSlash(update)
+			if response.ChatID != 0 {
+				_, err := r.bot.Send(response)
+				if err != nil {
+					log.Printf("خطا در ارسال پیام توقف بازی: %v", err)
+				}
+			}
+			return
+		}
 		// «کراش» بدون اسلش -> نمایش وضعیت
 		if strings.TrimSpace(text) == "کراش" {
 			status := r.crushCommand.BuildStatusMessage(message.Chat.ID)
@@ -394,7 +491,26 @@ func (r *CovoBot) handleUpdate(update tgbotapi.Update) {
 
 		// پشتیبانی از «پنل» بدون اسلش
 		if strings.TrimSpace(text) == "پنل" {
+			// گیت عضویت اجباری پیش از نمایش پنل
+			if ok, prompt := r.checkRequiredMembershipAndPromptUser(message.Chat.ID, message.From.ID); !ok {
+				if prompt.ChatID != 0 {
+					_, _ = r.bot.Send(prompt)
+				}
+				return
+			}
 			response := r.gapCommand.Handle(update)
+			if response.ChatID != 0 {
+				_, err := r.bot.Send(response)
+				if err != nil {
+					log.Printf("خطا در ارسال پیام: %v", err)
+				}
+			}
+			return
+		}
+
+		// «تگ» بدون اسلش روی ریپلای -> تگ همه اعضا (فقط ادمین)
+		if strings.TrimSpace(text) == "تگ" {
+			response := r.tagCommand.HandleTagAllOnReply(update)
 			if response.ChatID != 0 {
 				_, err := r.bot.Send(response)
 				if err != nil {
@@ -447,8 +563,24 @@ func (r *CovoBot) handleUpdate(update tgbotapi.Update) {
 
 	var response tgbotapi.MessageConfig
 
+	// برای همه دستورات اسلش‌دار گیت عضویت
+	if strings.HasPrefix(text, "/") {
+		if ok, prompt := r.checkRequiredMembershipAndPromptUser(message.Chat.ID, message.From.ID); !ok {
+			if prompt.ChatID != 0 {
+				_, _ = r.bot.Send(prompt)
+			}
+			return
+		}
+	}
+
 	switch {
 	case strings.HasPrefix(text, "/covo"):
+		if ok, prompt := r.checkRequiredMembershipAndPromptUser(message.Chat.ID, message.From.ID); !ok {
+			if prompt.ChatID != 0 {
+				_, _ = r.bot.Send(prompt)
+			}
+			return
+		}
 		response = r.covoCommand.Handle(update)
 	case strings.HasPrefix(text, "/cj"):
 		response = r.covoJokeCommand.Handle(update)
@@ -466,8 +598,14 @@ func (r *CovoBot) handleUpdate(update tgbotapi.Update) {
 		response = r.handleStartCommand(update)
 	case strings.HasPrefix(text, "/help"):
 		response = r.handleHelpCommand(update)
-	// پشتیبانی از /gap حذف شد؛ از «پنل» بدون اسلش استفاده کنید
+		// پشتیبانی از /gap حذف شد؛ از «پنل» بدون اسلش استفاده کنید
 	case strings.HasPrefix(text, "/فال"):
+		if ok, prompt := r.checkRequiredMembershipAndPromptUser(message.Chat.ID, message.From.ID); !ok {
+			if prompt.ChatID != 0 {
+				_, _ = r.bot.Send(prompt)
+			}
+			return
+		}
 		response = r.hafezCommand.Handle(update)
 	case strings.HasPrefix(text, "/admin"):
 		response = r.adminCommand.Handle(update)
@@ -506,6 +644,129 @@ func containsLink(text string) bool {
 	return false
 }
 
+// handleMyChatMember ثبت/آپدیت اطلاعات چت/کانالی که وضعیت ربات در آن تغییر کرده است
+func (r *CovoBot) handleMyChatMember(update tgbotapi.Update) {
+	m := update.MyChatMember
+	if m == nil {
+		return
+	}
+	chat := m.Chat
+	status := strings.ToLower(m.NewChatMember.Status)
+	isAdmin := status == "administrator" || status == "creator"
+	title := chat.Title
+	username := chat.UserName
+
+	// تلاش برای ذخیره/آپدیت رکورد کانال/گروه
+	if err := r.storage.UpsertBotChannel(chat.ID, title, username, isAdmin, 0); err != nil {
+		log.Printf("UpsertBotChannel error: %v", err)
+	}
+}
+
+// checkRequiredMembershipAndPrompt بررسی می‌کند کاربر عضو همه کانال‌های لازم است یا خیر
+// اگر عضو نبود، پیام راهنما با دکمه‌های جوین و دکمه «بررسی عضویت» ارسال می‌کند
+func (r *CovoBot) checkRequiredMembershipAndPromptUser(chatID int64, userID int64) (bool, tgbotapi.MessageConfig) {
+
+	// لینک‌ها را از scope سراسری می‌خوانیم (GroupID=0)
+	channels, err := r.storage.ListRequiredChannels(0)
+	if err != nil || len(channels) == 0 {
+		// چیزی برای بررسی نیست
+		return true, tgbotapi.MessageConfig{}
+	}
+
+	// بررسی عضویت برای هر کانال
+	notJoined := 0
+	for _, ch := range channels {
+		// اولویت با ChannelID (گروه/کانال عمومی)؛ اگر نبود، سعی با Username
+		var targetChatID int64
+		if ch.ChannelID != 0 {
+			targetChatID = ch.ChannelID
+		} else if ch.ChannelUsername != "" {
+			// در GetChatMember باید chatID کانال عددی یا @username باشد؛ کتابخانه فقط int64 می‌گیرد
+			// پس این مورد را نمی‌توان مستقیم چک کرد؛ از این‌رو در چنین حالتی صرفاً نمایش لینک می‌دهیم
+			continue
+		} else {
+			continue
+		}
+
+		cfg := tgbotapi.GetChatMemberConfig{ChatConfigWithUser: tgbotapi.ChatConfigWithUser{ChatID: targetChatID, UserID: userID}}
+		member, err := r.bot.GetChatMember(cfg)
+		if err != nil {
+			notJoined++
+			continue
+		}
+		// Joined if member/admin/creator/restricted
+		status := strings.ToLower(member.Status)
+		if !(status == "member" || status == "administrator" || status == "creator" || status == "restricted") {
+			notJoined++
+		}
+	}
+
+	if notJoined == 0 {
+		return true, tgbotapi.MessageConfig{}
+	}
+
+	// ساخت پیام و کیبورد جوین
+	text := "برای استفاده از ربات، لطفاً در کانال‌های زیر عضو شوید:"
+	var rows [][]tgbotapi.InlineKeyboardButton
+	for _, ch := range channels {
+		link := ch.Link
+		if link == "" && ch.ChannelUsername != "" {
+			link = "https://t.me/" + ch.ChannelUsername
+		}
+		if link == "" {
+			continue
+		}
+		title := ch.Title
+		if title == "" {
+			title = "Join"
+		}
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonURL(title, link),
+		))
+	}
+	// دکمه بررسی عضویت
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("✅ عضو شدم، بررسی کن", "admin_check_join"),
+	))
+	kb := tgbotapi.NewInlineKeyboardMarkup(rows...)
+	msg := tgbotapi.NewMessage(chatID, text)
+	msg.ReplyMarkup = kb
+	return false, msg
+}
+
+// buildJoinPromptWithoutCheck فقط بر اساس لینک‌های ثبت شده، پیام عضویت و دکمه‌ها را می‌سازد (بدون بررسی عضویت)
+func (r *CovoBot) buildJoinPromptWithoutCheck(chatID int64) (bool, tgbotapi.MessageConfig) {
+	channels, err := r.storage.ListRequiredChannels(0)
+	if err != nil || len(channels) == 0 {
+		return false, tgbotapi.MessageConfig{}
+	}
+	text := "برای استفاده از ربات، لطفاً در کانال‌های زیر عضو شوید:"
+	var rows [][]tgbotapi.InlineKeyboardButton
+	for _, ch := range channels {
+		link := ch.Link
+		if link == "" && ch.ChannelUsername != "" {
+			link = "https://t.me/" + ch.ChannelUsername
+		}
+		if link == "" {
+			continue
+		}
+		title := ch.Title
+		if title == "" {
+			title = "Join"
+		}
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonURL(title, link),
+		))
+	}
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("✅ عضو شدم، بررسی کن", "admin_check_join"),
+	))
+	kb := tgbotapi.NewInlineKeyboardMarkup(rows...)
+	msg := tgbotapi.NewMessage(chatID, text)
+	msg.ReplyMarkup = kb
+	return true, msg
+}
+
 func (r *CovoBot) handleStartCommand(update tgbotapi.Update) tgbotapi.MessageConfig {
 	chatID := update.Message.Chat.ID
 	chatType := update.Message.Chat.Type
@@ -515,6 +776,14 @@ func (r *CovoBot) handleStartCommand(update tgbotapi.Update) tgbotapi.MessageCon
 
 	// تشخیص نوع چت و ارسال پیام مناسب
 	if chatType == "private" {
+		// فقط یک‌بار در اولین استارت پیام عضویت را بدون چک ارسال کن
+		if sent, err := r.storage.WasPromoSent(userID); err == nil && !sent {
+			if has, prompt := r.buildJoinPromptWithoutCheck(chatID); has {
+				_ = r.storage.MarkPromoSent(userID)
+				return prompt
+			}
+			_ = r.storage.MarkPromoSent(userID)
+		}
 		// بررسی اینکه آیا کاربر ادمین است
 		if r.adminCommand.IsAdmin(userID) {
 			// پیام مخصوص ادمین‌ها
@@ -612,6 +881,12 @@ func (r *CovoBot) handleHelpCommand(update tgbotapi.Update) tgbotapi.MessageConf
 • هر 10 ساعت یک جفت کراش جدید اعلام می‌شود
 
 • با /کراشوضعیت وضعیت را بررسی کنید
+
+🎲 *بازی جرات یا حقیقت +۱۸:*
+• «بازی» (بدون اسلش، فقط ادمین) — ایجاد روم و شروع ثبت‌نام با دکمه‌های اینلاین
+• «توقف بازی» (بدون اسلش، فقط ادمین) — پایان بازی و بستن روم
+• بعد از بستن ثبت‌نام: نوبت‌ها به‌ترتیب شرکت‌کنندگان است؛ هر نفر «جرات» یا «سوال +۱۸» را انتخاب می‌کند
+• بات یک سؤال تصادفی می‌فرستد؛ کاربر باید ریپلای کند و سپس دکمه «✅ جواب دادم» را بزند تا نفر بعدی فعال شود
 
 💡 *نکات:*
 • برای پاسخ‌های بهتر، سوالات خود را دقیق مطرح کنید
