@@ -37,9 +37,9 @@ func LoadConfig() {
 		// MySQL Config
 		MySQLHost:     getEnv("MYSQL_HOST", "localhost"),
 		MySQLPort:     getEnv("MYSQL_PORT", "3306"),
-		MySQLUser:     getEnv("MYSQL_USER", "root"),
+		MySQLUser:     getEnv("MYSQL_USER", "covouser"),
 		MySQLPassword: getEnv("MYSQL_PASSWORD", "1362rh83835668@&$"),
-		MySQLDatabase: getEnv("MYSQL_DATABASE", "covo_bot"),
+		MySQLDatabase: getEnv("MYSQL_DATABASE", "myappdb"),
 	}
 }
 
