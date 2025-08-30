@@ -99,16 +99,15 @@ func NewMySQLStorage(host, port, user, password, dbname string) (*MySQLStorage, 
 		return nil, fmt.Errorf("error connecting to MySQL: %v", err)
 	}
 
-	// پاکسازی داده‌های تکراری قبل از اضافه کردن ایندکس یونیک
-	if err := cleanupDuplicateMembers(db); err != nil {
-		return nil, fmt.Errorf("error cleaning up duplicate members: %v", err)
-	}
-
 	// Auto Migrate the schemas
 	if err := db.AutoMigrate(&UserUsage{}, &GroupMessage{}, &GroupMember{}, &FeatureSetting{}, &RequiredChannel{}, &UserOnboarding{}, &BotChannel{}, &DailyChallenge{}); err != nil {
 		return nil, fmt.Errorf("error migrating database: %v", err)
 	}
 
+	// پاکسازی داده‌های تکراری قبل از اضافه کردن ایندکس یونیک
+	if err := cleanupDuplicateMembers(db); err != nil {
+		return nil, fmt.Errorf("error cleaning up duplicate members: %v", err)
+	}
 	return &MySQLStorage{db: db}, nil
 }
 
