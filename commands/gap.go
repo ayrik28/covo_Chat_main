@@ -35,6 +35,10 @@ func (r *GapCommand) Handle(update tgbotapi.Update) tgbotapi.MessageConfig {
 			tgbotapi.NewInlineKeyboardButtonData("📊 وضعیت ربات", "status"),
 			tgbotapi.NewInlineKeyboardButtonData("🎛️ قابلیت‌ها", "features"),
 		),
+		// ردیف جدید - چلنج روزانه
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("🧩 چلنج روزانه", "daily_challenge_menu"),
+		),
 		// ردیف چهارم - قفل‌ها
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("🔒 قفل", "locks"),
@@ -71,10 +75,11 @@ func (r *GapCommand) HandleCallback(update tgbotapi.Update) tgbotapi.CallbackCon
 
 	switch data {
 	case "features":
-		// نمایش دکمه‌های قابلیت‌ها (کِراش و فال و آمار)
+		// نمایش دکمه‌های قابلیت‌ها (کِراش، فال، آمار، چلنج روزانه)
 		crushEnabled, _ := r.storage.IsCrushEnabled(chatID)
 		hafezEnabled, _ := r.storage.IsFeatureEnabled(chatID, "hafez")
 		statsEnabled, _ := r.storage.IsFeatureEnabled(chatID, "stats")
+		dailyEnabled, _ := r.storage.IsFeatureEnabled(chatID, "daily_challenge")
 
 		crushIcon := "❌"
 		if crushEnabled {
@@ -102,9 +107,57 @@ func (r *GapCommand) HandleCallback(update tgbotapi.Update) tgbotapi.CallbackCon
 			tgbotapi.NewInlineKeyboardRow(
 				tgbotapi.NewInlineKeyboardButtonData("🙋‍♂️ آمار من", "show_my_stats"),
 			),
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("🧩 چلنج روزانه "+func() string {
+					if dailyEnabled {
+						return "✅"
+					} else {
+						return "❌"
+					}
+				}(), "toggle_daily_challenge"),
+			),
 		)
 		msg.Text = "🎛️ تنظیمات قابلیت‌ها:\n\nبا دکمه‌های زیر می‌توانید قابلیت‌ها را فعال/غیرفعال کنید."
 		msg.ReplyMarkup = featuresKeyboard
+
+	case "daily_challenge_menu":
+		// وضعیت فعلی را از storage بخوانیم
+		enabled, _ := r.storage.IsFeatureEnabled(chatID, "daily_challenge")
+		icon := "❌"
+		if enabled {
+			icon = "✅"
+		}
+		kb := tgbotapi.NewInlineKeyboardMarkup(
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("🧩 فعال‌سازی خودکار روزانه "+icon, "toggle_daily_challenge"),
+			),
+		)
+		msg.Text = "🧩 تنظیمات چلنج روزانه:\n\nبا فعال بودن، هر روز ساعت ۱۰ به وقت ایران یک ایموجی ارسال می‌شود تا ضرب‌المثل را حدس بزنید."
+		msg.ReplyMarkup = kb
+
+	case "toggle_daily_challenge":
+		enabled, err := r.storage.IsFeatureEnabled(chatID, "daily_challenge")
+		if err != nil {
+			msg.Text = "❌ خطا در بررسی وضعیت چلنج"
+			break
+		}
+		if err := r.storage.SetFeatureEnabled(chatID, "daily_challenge", !enabled); err != nil {
+			msg.Text = "❌ خطا در تغییر وضعیت چلنج"
+			break
+		}
+		// بازسازی منو
+		newEnabled, _ := r.storage.IsFeatureEnabled(chatID, "daily_challenge")
+		icon := "❌"
+		if newEnabled {
+			icon = "✅"
+		}
+		kb := tgbotapi.NewInlineKeyboardMarkup(
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("🧩 فعال‌سازی خودکار روزانه "+icon, "toggle_daily_challenge"),
+			),
+		)
+		msg.Text = "وضعیت چلنج روزانه به‌روزرسانی شد."
+		msg.ReplyMarkup = kb
 
 	case "status":
 		// نمایش وضعیت ربات

@@ -38,6 +38,20 @@ type FeatureSetting struct {
 	Enabled     bool
 }
 
+// DailyChallenge نگهداری وضعیت چالش روزانه در هر گروه
+type DailyChallenge struct {
+	ID         uint      `gorm:"primaryKey"`
+	GroupID    int64     `gorm:"index"`
+	MessageID  int       `gorm:"index"`
+	Proverb    string    `gorm:"type:text"`
+	Emojis     string    `gorm:"type:text"`
+	Answered   bool      `gorm:"default:false"`
+	WinnerID   int64     `gorm:"index"`
+	WinnerName string    `gorm:"type:varchar(255)"`
+	CreatedAt  time.Time `gorm:"index"`
+	UpdatedAt  time.Time `gorm:"index"`
+}
+
 // UserOnboarding برای ارسال یک‌باره پیام عضویت در اولین استارت
 type UserOnboarding struct {
 	UserID    int64     `gorm:"primaryKey"`
@@ -91,7 +105,7 @@ func NewMySQLStorage(host, port, user, password, dbname string) (*MySQLStorage, 
 	}
 
 	// Auto Migrate the schemas
-	if err := db.AutoMigrate(&UserUsage{}, &GroupMessage{}, &GroupMember{}, &FeatureSetting{}, &RequiredChannel{}, &UserOnboarding{}, &BotChannel{}); err != nil {
+	if err := db.AutoMigrate(&UserUsage{}, &GroupMessage{}, &GroupMember{}, &FeatureSetting{}, &RequiredChannel{}, &UserOnboarding{}, &BotChannel{}, &DailyChallenge{}); err != nil {
 		return nil, fmt.Errorf("error migrating database: %v", err)
 	}
 
@@ -291,6 +305,65 @@ func (m *MySQLStorage) SetFeatureEnabled(chatID int64, feature string, enabled b
 	}
 
 	return m.db.Save(&setting).Error
+}
+
+// GetEnabledGroupsForFeature returns all group IDs that have a specific feature enabled
+func (m *MySQLStorage) GetEnabledGroupsForFeature(feature string) ([]int64, error) {
+	var settings []FeatureSetting
+	if err := m.db.Where("feature_name = ? AND enabled = ?", feature, true).Find(&settings).Error; err != nil {
+		return nil, err
+	}
+	groups := make([]int64, 0, len(settings))
+	for _, s := range settings {
+		groups = append(groups, s.GroupID)
+	}
+	return groups, nil
+}
+
+// CreateDailyChallenge inserts a new daily challenge row for a group
+func (m *MySQLStorage) CreateDailyChallenge(groupID int64, messageID int, proverb string, emojis string) error {
+	dc := DailyChallenge{
+		GroupID:   groupID,
+		MessageID: messageID,
+		Proverb:   proverb,
+		Emojis:    emojis,
+		Answered:  false,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	return m.db.Create(&dc).Error
+}
+
+// GetActiveChallengeForGroup returns the latest not-expired challenge for a group (today)
+func (m *MySQLStorage) GetActiveChallengeForGroup(groupID int64) (*DailyChallenge, error) {
+	// limit to last 24 hours to ensure "روزانه" semantics
+	cutoff := time.Now().Add(-24 * time.Hour)
+	var dc DailyChallenge
+	err := m.db.Where("group_id = ? AND created_at >= ?", groupID, cutoff).Order("id DESC").First(&dc).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &dc, nil
+}
+
+// TryMarkChallengeAnswered marks challenge answered if not already answered; returns true if succeeded
+func (m *MySQLStorage) TryMarkChallengeAnswered(id uint, winnerID int64, winnerName string) (bool, error) {
+	// optimistic update where answered=false
+	res := m.db.Model(&DailyChallenge{}).
+		Where("id = ? AND answered = ?", id, false).
+		Updates(map[string]interface{}{
+			"answered":    true,
+			"winner_id":   winnerID,
+			"winner_name": winnerName,
+			"updated_at":  time.Now(),
+		})
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected > 0, nil
 }
 
 // Clown Feature Methods

@@ -15,6 +15,7 @@ import (
 	"redhat-bot/storage"
 	"strings"
 	"sync"
+	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/robfig/cron/v3"
@@ -37,6 +38,7 @@ type CovoBot struct {
 	moderationCommand *commands.ModerationCommand
 	truthDareCommand  *commands.TruthDareCommand
 	tagCommand        *commands.TagCommand
+	dailyChallenge    *commands.DailyChallengeCommand
 	// summaryScheduler *scheduler.DailySummaryScheduler
 	cron *cron.Cron
 }
@@ -139,8 +141,13 @@ func NewCovoBot() (*CovoBot, error) {
 	// راه‌اندازی زمان‌بند
 	// summaryScheduler := scheduler.NewDailySummaryScheduler(bot, storage, aiClient)
 
-	// راه‌اندازی کران
-	cronJob := cron.New()
+	// راه‌اندازی کران با تایم‌زون تهران
+	loc, err := time.LoadLocation("Asia/Tehran")
+	if err != nil {
+		log.Printf("cannot load Asia/Tehran timezone, falling back to local: %v", err)
+		loc = time.Local
+	}
+	cronJob := cron.New(cron.WithLocation(loc))
 
 	return &CovoBot{
 		bot:               bot,
@@ -159,6 +166,7 @@ func NewCovoBot() (*CovoBot, error) {
 		moderationCommand: moderationCommand,
 		truthDareCommand:  truthDareCommand,
 		tagCommand:        tagCommand,
+		dailyChallenge:    commands.NewDailyChallengeCommand(storage, bot),
 		// summaryScheduler: summaryScheduler,
 		cron: cronJob,
 	}, nil
@@ -176,8 +184,15 @@ func (r *CovoBot) Start() error {
 		return err
 	}
 
+	// کران چلنج روزانه ساعت ۱۰ به وقت ایران (با کرانی که روی Asia/Tehran تنظیم شده)
+	if _, err := r.cron.AddFunc("0 10 * * *", func() {
+		r.dailyChallenge.RunDailyForEnabledGroups()
+	}); err != nil {
+		return err
+	}
+
 	r.cron.Start()
-	log.Println("⏰ زمان‌بند خلاصه روزانه راه‌اندازی شد (ساعت ۹ صبح هر روز)")
+	log.Println("⏰ زمان‌بندها راه‌اندازی شد (خلاصه ۹:۰۰، چلنج ~۱۰:۳۰ تهران)")
 
 	// راه‌اندازی کراش scheduler
 	r.crushCommand.StartCrushScheduler()
@@ -375,6 +390,14 @@ func (r *CovoBot) handleUpdate(update tgbotapi.Update) {
 		resp := r.adminCommand.HandlePrivateTextInput(update)
 		if resp.ChatID != 0 {
 			_, _ = r.bot.Send(resp)
+		}
+		return
+	}
+
+	// اگر پاسخ به چلنج روزانه است، اول رسیدگی شود
+	if resp := r.dailyChallenge.HandleAnswer(update); resp.ChatID != 0 {
+		if _, err := r.bot.Send(resp); err != nil {
+			log.Printf("خطا در اعلام برنده چلنج: %v", err)
 		}
 		return
 	}
