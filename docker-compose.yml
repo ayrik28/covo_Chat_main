@@ -1,0 +1,88 @@
+version: '3.8'
+
+services:
+  # پایگاه داده MySQL
+  mysql:
+    image: mysql:8.0
+    container_name: covo-bot-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root_password_here
+      MYSQL_DATABASE: myappdb
+      MYSQL_USER: covouser
+      MYSQL_PASSWORD: your_secure_password_here
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - covo-network
+    command: --default-authentication-plugin=mysql_native_password
+
+  # بات Covo
+  covo-bot:
+    build: .
+    container_name: covo-bot
+    restart: unless-stopped
+    depends_on:
+      - mysql
+    environment:
+      - TELEGRAM_TOKEN=${TELEGRAM_TOKEN}
+      - DEEPSEEK_TOKEN=${DEEPSEEK_TOKEN}
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=3306
+      - MYSQL_USER=covouser
+      - MYSQL_PASSWORD=your_secure_password_here
+      - MYSQL_DATABASE=myappdb
+      - MAX_REQUESTS_PER_DAY=1000
+      - COOLDOWN_SECONDS=5
+    volumes:
+      - ./jsonfile:/app/jsonfile
+      - ./logs:/app/logs
+    networks:
+      - covo-network
+    healthcheck:
+      test: ["CMD", "pgrep", "covo-bot"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Redis برای Cache (اختیاری)
+  redis:
+    image: redis:7-alpine
+    container_name: covo-bot-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - covo-network
+    command: redis-server --appendonly yes
+
+  # Nginx برای Load Balancing (اختیاری)
+  nginx:
+    image: nginx:alpine
+    container_name: covo-bot-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf
+      - ./ssl:/etc/nginx/ssl
+    depends_on:
+      - covo-bot
+    networks:
+      - covo-network
+
+volumes:
+  mysql_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  covo-network:
+    driver: bridge
