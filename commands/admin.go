@@ -19,8 +19,8 @@ type AdminCommand struct {
 
 // لیست ادمین‌های مجاز
 var adminUsers = map[int64]string{
-	7853092812: "مهشید",
-	990475046:  "هانتر",
+	1234567890: "x",
+	2345678901: "y",
 }
 
 func NewAdminCommand(bot *tgbotapi.BotAPI, storage *storage.MySQLStorage) *AdminCommand {
@@ -45,7 +45,7 @@ func (r *AdminCommand) GetAdminWelcome(userID int64) string {
 	}
 
 	switch userID {
-	case 7853092812: // مهشید
+	case 1234567890:
 		return fmt.Sprintf(`🌟 *سلام %s عزیز!* 🌟
 
 
@@ -58,7 +58,7 @@ func (r *AdminCommand) GetAdminWelcome(userID int64) string {
 
 ✨ از اینکه منو ساختی ممنونم! 💖`, name)
 
-	case 990475046: // هانتر
+	case 2345678901:
 		return fmt.Sprintf(`🌟 *سلام %s عزیز!* 🌟
 
 🎯 خوش اومدی به پنل ادمین!
