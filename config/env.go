@@ -30,15 +30,15 @@ func LoadConfig() {
 	}
 
 	AppConfig = &Config{
-		TelegramToken:     getEnv("TELEGRAM_TOKEN", "8183997288:AAEGZBi8MdaYG3aHC-XM-6wCW2hB0TA4LSc"),
-		DeepSeekToken:     getEnv("DEEPSEEK_TOKEN", "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"),
+		// TelegramToken:     getEnv("TELEGRAM_TOKEN", ""),
+		// DeepSeekToken:     getEnv("DEEPSEEK_TOKEN", ""),
 		MaxRequestsPerDay: getEnvAsInt("MAX_REQUESTS_PER_DAY", 5),
 		CooldownSeconds:   getEnvAsInt("COOLDOWN_SECONDS", 10),
 		// MySQL Config
 		MySQLHost:     getEnv("MYSQL_HOST", "localhost"),
 		MySQLPort:     getEnv("MYSQL_PORT", "3306"),
-		MySQLUser:     getEnv("MYSQL_USER", "covouser"),
-		MySQLPassword: getEnv("MYSQL_PASSWORD", "1362rh83835668@&$"),
+		MySQLUser:     getEnv("MYSQL_USER", ""),
+		MySQLPassword: getEnv("MYSQL_PASSWORD", ""),
 		MySQLDatabase: getEnv("MYSQL_DATABASE", "myappdb"),
 	}
 }
